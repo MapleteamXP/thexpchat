@@ -82,6 +82,7 @@ function App() {
     toggleAudio,
     toggleVideo,
     setQuality,
+    getDiagnostics,
   } = useRobustAV(roomCode, username, currentView === 'chat');
 
   // Update local video element
@@ -434,6 +435,20 @@ function App() {
           >
             🎨
           </button>
+          
+          {/* Debug/Diagnostics button */}
+          <button
+            onClick={async () => {
+              const diag = await getDiagnostics();
+              alert('Diagnostics logged to console. Press F12 to view.');
+              console.log(JSON.stringify(diag, null, 2));
+            }}
+            className="xp-button px-2 md:px-3 py-2 text-xs md:text-sm font-bold text-white hidden md:block"
+            style={{ background: '#666' }}
+            title="Run diagnostics (F12 for console)"
+          >
+            🔧
+          </button>
         </div>
       </div>
       
@@ -523,6 +538,10 @@ function App() {
                     playsInline
                     className="w-full h-full object-cover"
                     style={{ transform: 'scaleX(-1)' }}
+                    onLoadedMetadata={(e) => {
+                      const video = e.currentTarget;
+                      video.play().catch(err => console.log('Local video play failed:', err));
+                    }}
                   />
                   <span className="absolute bottom-1 left-1 text-[10px] bg-black/60 px-1.5 py-0.5 rounded text-white font-medium">
                     You
@@ -539,7 +558,7 @@ function App() {
               {Array.from(avPeers.values()).map((peer) => (
                 peer.videoStream && (
                   <div key={peer.id} className="relative aspect-video bg-black rounded-lg overflow-hidden shrink-0">
-                    <RemoteVideo stream={peer.videoStream} />
+                    <RemoteVideo stream={peer.videoStream} username={peer.username} />
                     <span className="absolute bottom-1 left-1 text-[10px] bg-black/60 px-1.5 py-0.5 rounded text-white font-medium">
                       {peer.username}
                     </span>
@@ -559,19 +578,20 @@ function App() {
             <div className="xp-panel p-3">
               <h3 className="text-xs font-bold mb-2" style={{ color: currentTheme.textColor }}>Voice Chat Active</h3>
               <div className="flex flex-wrap gap-1">
-                <span className="text-xs px-2 py-1 rounded-full bg-green-500/30 text-green-100">🎤 You</span>
+                <span className="text-xs px-2 py-1 rounded-full bg-green-500/30 text-green-100 flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-green-400" />
+                  🎤 You
+                </span>
                 {Array.from(avPeers.values()).map((peer) => (
-                  <span key={peer.id} className={`text-xs px-2 py-1 rounded-full ${peer.connected ? 'bg-blue-500/30 text-blue-100' : 'bg-gray-500/30 text-gray-300'}`}>
-                    🎤 {peer.username}
-                  </span>
+                  <AudioPeerIndicator key={peer.id} peer={peer} />
                 ))}
               </div>
             </div>
           )}
         </div>
         
-        {/* MIDDLE PANEL: Chat area - Independent scroll with manual control */}
-        <div className="flex-1 xp-panel flex flex-col min-h-0 relative">
+        {/* MIDDLE PANEL: Chat area - Fixed height with scroll */}
+        <div className="flex-1 xp-panel flex flex-col h-[calc(100vh-180px)] md:h-auto md:min-h-0 relative">
           {/* Messages - Scrollable container */}
           <div 
             ref={chatContainerRef}
@@ -819,23 +839,158 @@ function App() {
   );
 }
 
-// Remote video component
-function RemoteVideo({ stream }: { stream: MediaStream }) {
+// Remote video component with audio level indicator
+function RemoteVideo({ stream, username }: { stream: MediaStream; username: string }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [audioLevel, setAudioLevel] = useState(0);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animationRef = useRef<number | null>(null);
   
   useEffect(() => {
-    if (videoRef.current) {
-      videoRef.current.srcObject = stream;
+    const video = videoRef.current;
+    if (video && stream) {
+      console.log('RemoteVideo: Setting stream', stream.id, 'with', stream.getTracks().length, 'tracks');
+      video.srcObject = stream;
+      
+      // Ensure video plays
+      const playVideo = async () => {
+        try {
+          video.muted = false;
+          await video.play();
+          console.log('RemoteVideo: Playing successfully');
+        } catch (err) {
+          console.log('RemoteVideo: Autoplay blocked, will retry:', err);
+          // Retry on user interaction
+          const handler = () => {
+            video.play().catch(console.error);
+            document.removeEventListener('click', handler);
+            document.removeEventListener('touchstart', handler);
+          };
+          document.addEventListener('click', handler, { once: true });
+          document.addEventListener('touchstart', handler, { once: true });
+        }
+      };
+      
+      playVideo();
+      
+      // Listen for track changes
+      stream.onaddtrack = () => {
+        console.log('RemoteVideo: Track added to stream');
+        playVideo();
+      };
+      
+      return () => {
+        video.pause();
+        video.srcObject = null;
+      };
     }
   }, [stream]);
   
+  // Audio level visualization
+  useEffect(() => {
+    if (!stream || stream.getAudioTracks().length === 0) return;
+    
+    // @ts-ignore
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    
+    const audioContext = new AudioContext();
+    const source = audioContext.createMediaStreamSource(stream);
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.8;
+    source.connect(analyser);
+    analyserRef.current = analyser;
+    
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+    
+    const updateLevel = () => {
+      analyser.getByteFrequencyData(dataArray);
+      const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
+      setAudioLevel(average);
+      animationRef.current = requestAnimationFrame(updateLevel);
+    };
+    
+    updateLevel();
+    
+    return () => {
+      if (animationRef.current) cancelAnimationFrame(animationRef.current);
+      audioContext.close();
+    };
+  }, [stream]);
+  
   return (
-    <video
-      ref={videoRef}
-      autoPlay
-      playsInline
-      className="w-full h-full object-cover"
-    />
+    <div className="relative w-full h-full">
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted={false}
+        className="w-full h-full object-cover"
+        style={{ transform: 'scaleX(-1)' }}
+      />
+      {/* Audio level indicator */}
+      {stream.getAudioTracks().length > 0 && (
+        <div className="absolute bottom-1 right-1 flex items-end gap-0.5 h-3 bg-black/60 px-1 py-0.5 rounded">
+          {[1, 2, 3].map((i) => (
+            <div
+              key={i}
+              className="w-0.5 bg-green-400 transition-all duration-75"
+              style={{
+                height: `${Math.min(100, (audioLevel / (i * 30)) * 100)}%`,
+                opacity: audioLevel > i * 20 ? 1 : 0.3,
+              }}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Audio-only peer indicator with visual feedback
+function AudioPeerIndicator({ peer }: { peer: any }) {
+  const [audioLevel, setAudioLevel] = useState(0);
+  
+  useEffect(() => {
+    if (!peer.audioStream) return;
+    
+    // @ts-ignore
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    
+    const audioContext = new AudioContext();
+    const source = audioContext.createMediaStreamSource(peer.audioStream);
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.8;
+    source.connect(analyser);
+    
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+    let animationId: number;
+    
+    const updateLevel = () => {
+      analyser.getByteFrequencyData(dataArray);
+      const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
+      setAudioLevel(average);
+      animationId = requestAnimationFrame(updateLevel);
+    };
+    
+    updateLevel();
+    
+    return () => {
+      cancelAnimationFrame(animationId);
+      audioContext.close();
+    };
+  }, [peer.audioStream]);
+  
+  return (
+    <span className={`text-xs px-2 py-1 rounded-full flex items-center gap-1 transition-all ${
+      peer.connected ? 'bg-blue-500/30 text-blue-100' : 'bg-gray-500/30 text-gray-300'
+    }`}>
+      <span className={`w-2 h-2 rounded-full ${audioLevel > 10 ? 'bg-green-400 animate-pulse' : 'bg-gray-400'}`} />
+      🎤 {peer.username}
+    </span>
   );
 }
 

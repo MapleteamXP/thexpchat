@@ -24,31 +24,40 @@ interface LocalStreams {
 type QualityLevel = 'high' | 'medium' | 'low' | 'audio-only';
 type ConnectionState = 'connected' | 'connecting' | 'disconnected' | 'reconnecting' | 'failed';
 
-// Enhanced RTC config with more TURN servers for better connectivity
+// Enhanced RTC config with more TURN servers for better international connectivity
+// Including servers optimized for US-Mexico connections
 const RTC_CONFIG: RTCConfiguration = {
   iceServers: [
+    // Google's public STUN servers
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
     { urls: 'stun:stun3.l.google.com:19302' },
     { urls: 'stun:stun4.l.google.com:19302' },
+    // Twilio's public TURN servers (more reliable for international)
     {
-      urls: 'turn:openrelay.metered.ca:80',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
+      urls: 'turn:global.turn.twilio.com:3478?transport=udp',
+      username: 'f4b4035eaa76b7a9f187e111a2615b4392f14d4c82c7eb60e47d9a46d95a8519',
+      credential: 'WKg7oO/acUNOXqhkC4gkU9Gl1Z6K3w3/S6NhvCyShvI=',
     },
+    {
+      urls: 'turn:global.turn.twilio.com:443?transport=tcp',
+      username: 'f4b4035eaa76b7a9f187e111a2615b4392f14d4c82c7eb60e47d9a46d95a8519',
+      credential: 'WKg7oO/acUNOXqhkC4gkU9Gl1Z6K3w3/S6NhvCyShvI=',
+    },
+    // Open Relay (backup)
     {
       urls: 'turn:openrelay.metered.ca:443',
       username: 'openrelayproject',
       credential: 'openrelayproject',
     },
+    // Cloudflare TURN (experimental but works well)
     {
-      urls: 'turn:relay.metered.ca:443',
+      urls: 'turn:turn.cloudflare.com:3478',
       username: 'openrelayproject',
       credential: 'openrelayproject',
     },
   ],
-  iceCandidatePoolSize: 10,
   bundlePolicy: 'max-bundle' as RTCBundlePolicy,
   rtcpMuxPolicy: 'require' as RTCRtcpMuxPolicy,
   iceTransportPolicy: 'all',
@@ -128,6 +137,8 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
   const localStreamsRef = useRef<LocalStreams>({ audio: null, video: null });
   const clientRef = useRef<mqtt.MqttClient | null>(null);
   const myIdRef = useRef<string>(`av-${Math.random().toString(36).substr(2, 9)}`);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const connectionStatsRef = useRef<Map<string, any>>(new Map());
   const peersRef = useRef<Map<string, AVPeer>>(new Map());
   const reconnectAttemptsRef = useRef<Map<string, number>>(new Map());
   const pingIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -759,6 +770,7 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
     try {
       const pc = new RTCPeerConnection(RTC_CONFIG);
 
+      // Add local audio tracks if available
       if (localStreamsRef.current.audio) {
         localStreamsRef.current.audio.getAudioTracks().forEach(track => {
           const sender = pc.addTrack(track, localStreamsRef.current.audio!);
@@ -766,11 +778,27 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
         });
       }
 
+      // Add local video tracks if available
       if (localStreamsRef.current.video) {
         localStreamsRef.current.video.getVideoTracks().forEach(track => {
           const sender = pc.addTrack(track, localStreamsRef.current.video!);
           applyBitrateConstraint(sender, 'video', currentQualityRef.current);
         });
+      }
+
+      // IMPORTANT: Add transceivers to receive audio/video from remote peer
+      // This ensures we can receive even if we don't send
+      const senders = pc.getSenders();
+      const hasAudioSender = senders.some(s => s.track?.kind === 'audio');
+      const hasVideoSender = senders.some(s => s.track?.kind === 'video');
+
+      if (!hasAudioSender) {
+        // Add recvonly transceiver for audio to receive remote audio
+        pc.addTransceiver('audio', { direction: 'recvonly' });
+      }
+      if (!hasVideoSender) {
+        // Add recvonly transceiver for video to receive remote video
+        pc.addTransceiver('video', { direction: 'recvonly' });
       }
 
       pc.onnegotiationneeded = async () => {
@@ -856,25 +884,38 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
       };
 
       pc.ontrack = (event) => {
-        console.log('Received track from:', peerId, 'kind:', event.track.kind);
-        const [stream] = event.streams;
-        const peer = peersRef.current.get(peerId);
+        console.log('Received track from:', peerId, 'kind:', event.track.kind, 'streams:', event.streams.length);
         
-        if (peer) {
-          if (event.track.kind === 'audio') {
-            peer.audioStream = stream;
-            playAudio(peerId, stream);
-          } else if (event.track.kind === 'video') {
-            peer.videoStream = stream;
-          }
-          peer.connected = true;
-          peer.lastPing = Date.now();
-          peersRef.current.set(peerId, peer);
-          setPeers(new Map(peersRef.current));
-          
-          reconnectAttemptsRef.current.set(peerId, 0);
-          stableConnectionRef.current.set(peerId, true);
+        // Get or create a stream for this peer
+        const peer = peersRef.current.get(peerId);
+        if (!peer) return;
+        
+        // Use the provided stream or create one from the track
+        let stream: MediaStream;
+        if (event.streams && event.streams[0]) {
+          stream = event.streams[0];
+        } else {
+          // Create a new stream if none provided (older browsers)
+          stream = new MediaStream([event.track]);
         }
+        
+        if (event.track.kind === 'audio') {
+          console.log('Setting up audio for peer:', peerId);
+          peer.audioStream = stream;
+          // Delay slightly to ensure DOM is ready
+          setTimeout(() => playAudio(peerId, stream), 100);
+        } else if (event.track.kind === 'video') {
+          console.log('Setting up video for peer:', peerId);
+          peer.videoStream = stream;
+        }
+        
+        peer.connected = true;
+        peer.lastPing = Date.now();
+        peersRef.current.set(peerId, peer);
+        setPeers(new Map(peersRef.current));
+        
+        reconnectAttemptsRef.current.set(peerId, 0);
+        stableConnectionRef.current.set(peerId, true);
       };
 
       pc.onconnectionstatechange = () => {
@@ -923,10 +964,8 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
       if (isInitiator) {
         try {
           makingOfferRef.current.add(peerId);
-          const offer = await pc.createOffer({
-            offerToReceiveAudio: true,
-            offerToReceiveVideo: true,
-          });
+          // Modern way: ensure we have transceivers for receiving
+          const offer = await pc.createOffer();
           await pc.setLocalDescription(offer);
           
           await waitForIceGathering(pc, 5000);
@@ -999,9 +1038,11 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
   const handleOffer = async (offer: RTCSessionDescriptionInit, from: string, username: string) => {
     console.log('Received offer from:', from);
     
+    // Even if we don't have local streams yet, we should accept the offer
+    // to be able to receive audio/video from the other peer
     if (!localStreamsRef.current.audio && !localStreamsRef.current.video) {
-      console.log('No local streams, ignoring offer');
-      return;
+      console.log('No local streams yet, but accepting offer to receive media from:', from);
+      // We still proceed - we'll add transceivers for receiving
     }
 
     const existing = peersRef.current.get(from);
@@ -1028,8 +1069,11 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
     
     try {
       await pc.setRemoteDescription(offer);
+      console.log('Set remote description for offer from:', from);
       
+      // Process buffered ICE candidates
       if (peer && peer.iceBuffer.length > 0) {
+        console.log('Processing', peer.iceBuffer.length, 'buffered ICE candidates');
         for (const candidate of peer.iceBuffer) {
           try {
             await pc.addIceCandidate(candidate);
@@ -1040,8 +1084,10 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
         peer.iceBuffer = [];
       }
       
+      // Create answer - this will include our transceivers
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
+      console.log('Created and set local answer for:', from);
       
       await waitForIceGathering(pc, 5000);
       
@@ -1109,61 +1155,134 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
     }
   };
 
+  // Unlock audio context - CRITICAL for browsers that block audio
+  const unlockAudioContext = async () => {
+    try {
+      if (!audioContextRef.current) {
+        // @ts-ignore - webkitAudioContext for Safari
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (AudioContextClass) {
+          audioContextRef.current = new AudioContextClass();
+        }
+      }
+      
+      if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+        await audioContextRef.current.resume();
+        console.log('Audio context resumed successfully');
+      }
+    } catch (err) {
+      console.log('Audio context unlock failed:', err);
+    }
+  };
+
   const playAudio = (peerId: string, stream: MediaStream) => {
-    const existing = document.getElementById(`av-audio-${peerId}`);
-    if (existing) existing.remove();
+    console.log('Setting up audio playback for peer:', peerId);
+    console.log('Stream info:', {
+      id: stream.id,
+      active: stream.active,
+      audioTracks: stream.getAudioTracks().length,
+      trackInfo: stream.getAudioTracks().map(t => ({ enabled: t.enabled, muted: t.muted, readyState: t.readyState }))
+    });
     
+    // Stop any existing audio for this peer
+    const existing = document.getElementById(`av-audio-${peerId}`) as HTMLAudioElement;
+    if (existing) {
+      console.log('Removing existing audio element for peer:', peerId);
+      existing.pause();
+      existing.srcObject = null;
+      existing.remove();
+    }
+    
+    // Create new audio element
     const audio = document.createElement('audio');
     audio.id = `av-audio-${peerId}`;
     audio.srcObject = stream;
     audio.autoplay = true;
     audio.volume = 1.0;
-    audio.muted = false;
+    // Start muted and unmute after play - this helps with autoplay policies
+    audio.muted = true;
+    audio.playsInline = true; // Important for iOS
+    audio.setAttribute('data-peer-id', peerId);
     
-    const tryPlay = () => {
-      audio.play().catch(err => {
-        console.log('Audio play failed, will retry on interaction:', err);
-      });
+    // Add to body first, then play
+    document.body.appendChild(audio);
+    
+    const tryPlay = async () => {
+      try {
+        await audio.play();
+        // Unmute after successful play
+        audio.muted = false;
+        console.log('✅ Audio playing successfully from:', peerId);
+      } catch (err) {
+        console.error('❌ Audio play failed for', peerId, ':', err);
+        // Keep muted and retry on interaction
+      }
     };
     
+    // Try to play immediately
     tryPlay();
     
-    const interactionHandler = () => {
-      tryPlay();
-      document.removeEventListener('click', interactionHandler);
-      document.removeEventListener('touchstart', interactionHandler);
+    // Also set up interaction handler for browsers that block autoplay
+    const interactionHandler = async () => {
+      if (audio.paused || audio.muted) {
+        audio.muted = false;
+        try {
+          await audio.play();
+          console.log('✅ Audio resumed after user interaction for:', peerId);
+        } catch (err) {
+          console.error('❌ Audio still failed after interaction:', err);
+        }
+      }
     };
     
+    // Listen for track events
+    stream.getAudioTracks().forEach(track => {
+      track.onended = () => {
+        console.log('Audio track ended for peer:', peerId);
+      };
+      track.onmute = () => {
+        console.log('Audio track muted for peer:', peerId);
+      };
+      track.onunmute = () => {
+        console.log('Audio track unmuted for peer:', peerId);
+        // Try to play again when track becomes active
+        if (audio.paused) {
+          audio.play().catch(console.error);
+        }
+      };
+    });
+    
+    // Multiple event listeners to catch user interaction
     document.addEventListener('click', interactionHandler, { once: true });
     document.addEventListener('touchstart', interactionHandler, { once: true });
-    
-    document.body.appendChild(audio);
-    console.log('Playing audio from:', peerId);
+    document.addEventListener('keydown', interactionHandler, { once: true });
   };
 
   const enableAudio = async (targetQuality?: QualityLevel): Promise<boolean> => {
     try {
       setError(null);
+      
+      // CRITICAL: Unlock audio context first (required by browsers)
+      await unlockAudioContext();
+      
       const quality = targetQuality || currentQualityRef.current;
       console.log('Enabling audio with quality:', quality);
       
+      // Check if we already have permission
+      try {
+        const permissions = await navigator.permissions.query({ name: 'microphone' as PermissionName });
+        console.log('Microphone permission state:', permissions.state);
+      } catch (e) {
+        // Permission API not supported, continue anyway
+      }
+      
+      // Stop and remove existing audio tracks from all peer connections
       if (localStreamsRef.current.audio) {
-        localStreamsRef.current.audio.getTracks().forEach(t => {
-          t.stop();
-          peersRef.current.forEach((peer) => {
-            const senders = peer.connection.getSenders();
-            senders.forEach(sender => {
-              if (sender.track && sender.track.kind === 'audio') {
-                try {
-                  peer.connection.removeTrack(sender);
-                } catch (e) {}
-              }
-            });
-          });
-        });
+        localStreamsRef.current.audio.getTracks().forEach(t => t.stop());
         localStreamsRef.current.audio = null;
       }
       
+      // Get new audio stream
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: getAudioConstraints(quality),
         video: false,
@@ -1172,13 +1291,57 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
       localStreamsRef.current.audio = stream;
       setIsAudioEnabled(true);
       
-      peersRef.current.forEach((peer) => {
-        stream.getTracks().forEach(track => {
-          const sender = peer.connection.addTrack(track, stream);
-          applyBitrateConstraint(sender, 'audio', quality);
-        });
+      // Add tracks to all existing peer connections and renegotiate
+      const addPromises = Array.from(peersRef.current.entries()).map(async ([peerId, peer]) => {
+        try {
+          // Remove existing audio senders first
+          const senders = peer.connection.getSenders();
+          for (const sender of senders) {
+            if (sender.track?.kind === 'audio') {
+              try {
+                peer.connection.removeTrack(sender);
+              } catch (e) {
+                console.log('Error removing audio sender:', e);
+              }
+            }
+          }
+          
+          // Add new audio track
+          stream.getAudioTracks().forEach(track => {
+            const sender = peer.connection.addTrack(track, stream);
+            applyBitrateConstraint(sender, 'audio', quality);
+          });
+          
+          // Trigger renegotiation
+          makingOfferRef.current.add(peerId);
+          const offer = await peer.connection.createOffer();
+          await peer.connection.setLocalDescription(offer);
+          await waitForIceGathering(peer.connection, 4000);
+          
+          const finalOffer = peer.connection.localDescription;
+          if (finalOffer && clientRef.current?.connected) {
+            clientRef.current.publish(
+              `xpav/${roomCode}/offer`,
+              JSON.stringify({
+                type: 'av-offer',
+                from: myIdRef.current,
+                to: peerId,
+                offer: finalOffer,
+                username: localUsername,
+                quality: quality,
+              })
+            );
+          }
+          makingOfferRef.current.delete(peerId);
+        } catch (err) {
+          console.error('Error adding audio to peer', peerId, ':', err);
+          makingOfferRef.current.delete(peerId);
+        }
       });
       
+      await Promise.all(addPromises);
+      
+      // Announce presence to new peers
       broadcastJoin();
       
       return true;
@@ -1196,20 +1359,9 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
       const quality = targetQuality || currentQualityRef.current;
       console.log('Enabling video with quality:', quality);
       
+      // Stop and remove existing video tracks
       if (localStreamsRef.current.video) {
-        localStreamsRef.current.video.getTracks().forEach(t => {
-          t.stop();
-          peersRef.current.forEach((peer) => {
-            const senders = peer.connection.getSenders();
-            senders.forEach(sender => {
-              if (sender.track && sender.track.kind === 'video') {
-                try {
-                  peer.connection.removeTrack(sender);
-                } catch (e) {}
-              }
-            });
-          });
-        });
+        localStreamsRef.current.video.getTracks().forEach(t => t.stop());
         localStreamsRef.current.video = null;
         setLocalVideoStream(null);
       }
@@ -1219,6 +1371,7 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
         return true;
       }
       
+      // Get new video stream
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
         video: getVideoConstraints(quality, isMobileRef.current),
@@ -1228,13 +1381,57 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
       setLocalVideoStream(stream);
       setIsVideoEnabled(true);
       
-      peersRef.current.forEach((peer) => {
-        stream.getTracks().forEach(track => {
-          const sender = peer.connection.addTrack(track, stream);
-          applyBitrateConstraint(sender, 'video', quality);
-        });
+      // Add tracks to all existing peer connections and renegotiate
+      const addPromises = Array.from(peersRef.current.entries()).map(async ([peerId, peer]) => {
+        try {
+          // Remove existing video senders first
+          const senders = peer.connection.getSenders();
+          for (const sender of senders) {
+            if (sender.track?.kind === 'video') {
+              try {
+                peer.connection.removeTrack(sender);
+              } catch (e) {
+                console.log('Error removing video sender:', e);
+              }
+            }
+          }
+          
+          // Add new video track
+          stream.getVideoTracks().forEach(track => {
+            const sender = peer.connection.addTrack(track, stream);
+            applyBitrateConstraint(sender, 'video', quality);
+          });
+          
+          // Trigger renegotiation
+          makingOfferRef.current.add(peerId);
+          const offer = await peer.connection.createOffer();
+          await peer.connection.setLocalDescription(offer);
+          await waitForIceGathering(peer.connection, 4000);
+          
+          const finalOffer = peer.connection.localDescription;
+          if (finalOffer && clientRef.current?.connected) {
+            clientRef.current.publish(
+              `xpav/${roomCode}/offer`,
+              JSON.stringify({
+                type: 'av-offer',
+                from: myIdRef.current,
+                to: peerId,
+                offer: finalOffer,
+                username: localUsername,
+                quality: quality,
+              })
+            );
+          }
+          makingOfferRef.current.delete(peerId);
+        } catch (err) {
+          console.error('Error adding video to peer', peerId, ':', err);
+          makingOfferRef.current.delete(peerId);
+        }
       });
       
+      await Promise.all(addPromises);
+      
+      // Announce presence to new peers
       broadcastJoin();
       
       return true;
@@ -1297,6 +1494,86 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
       return false;
     }
     return await enableVideo();
+  };
+
+  // Diagnostic function to help troubleshoot connection issues
+  const getDiagnostics = async () => {
+    const diagnostics: any = {
+      timestamp: new Date().toISOString(),
+      userAgent: navigator.userAgent,
+      roomCode,
+      localUsername,
+      myId: myIdRef.current,
+      isAudioEnabled,
+      isVideoEnabled,
+      connectionState,
+      connectionQuality,
+      isReconnecting,
+      mqttConnected: clientRef.current?.connected || false,
+      peers: Array.from(peersRef.current.entries()).map(([id, peer]) => ({
+        id,
+        username: peer.username,
+        connected: peer.connected,
+        connectionState: peer.connection.connectionState,
+        iceState: peer.connection.iceConnectionState,
+        signalingState: peer.connection.signalingState,
+        hasAudioStream: !!peer.audioStream,
+        hasVideoStream: !!peer.videoStream,
+        lastPing: peer.lastPing,
+      })),
+    };
+
+    // Check for audio elements
+    const audioElements = document.querySelectorAll('audio');
+    diagnostics.audioElements = Array.from(audioElements).map((el: HTMLAudioElement) => ({
+      id: el.id,
+      paused: el.paused,
+      muted: el.muted,
+      volume: el.volume,
+      readyState: el.readyState,
+      networkState: el.networkState,
+      srcObject: el.srcObject ? {
+        active: (el.srcObject as MediaStream).active,
+        tracks: (el.srcObject as MediaStream).getTracks().map(t => ({
+          kind: t.kind,
+          enabled: t.enabled,
+          muted: t.muted,
+          readyState: t.readyState,
+        }))
+      } : null,
+    }));
+
+    // Get detailed ICE stats for each peer
+    for (const [peerId, peer] of peersRef.current.entries()) {
+      try {
+        const stats = await peer.connection.getStats();
+        const peerStats: any = { id: peerId };
+        stats.forEach((report: any) => {
+          if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+            peerStats.iceCandidatePair = {
+              localCandidateId: report.localCandidateId,
+              remoteCandidateId: report.remoteCandidateId,
+              currentRoundTripTime: report.currentRoundTripTime,
+            };
+          }
+          if (report.type === 'remote-inbound-rtp') {
+            peerStats.remoteInbound = {
+              kind: report.kind,
+              packetsReceived: report.packetsReceived,
+              packetsLost: report.packetsLost,
+              jitter: report.jitter,
+            };
+          }
+        });
+        diagnostics.peerStats = diagnostics.peerStats || [];
+        diagnostics.peerStats.push(peerStats);
+      } catch (e) {
+        console.error('Error getting stats for peer', peerId, ':', e);
+      }
+    }
+
+    console.log('=== AV DIAGNOSTICS ===', diagnostics);
+    return diagnostics;
   };
 
   const setQuality = (quality: QualityLevel) => {
@@ -1369,5 +1646,6 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
     toggleAudio,
     toggleVideo,
     setQuality,
+    getDiagnostics,
   };
 }
