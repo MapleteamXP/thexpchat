@@ -1,0 +1,774 @@
+// XP-chat 45 Candy Flavor Themes
+
+export interface Theme {
+  id: string;
+  name: string;
+  gradient: string;
+  primary: string;
+  accent: string;
+  textColor: string;
+  textSecondary: string;
+  panelBg: string;
+  panelBorder: string;
+  isDark: boolean;
+}
+
+export const themes: Theme[] = [
+  // Original 14 themes
+  {
+    id: "grape",
+    name: "Grape",
+    gradient: "linear-gradient(135deg, #7B2FF7 0%, #A66CFF 100%)",
+    primary: "#7B2FF7",
+    accent: "#00F0FF",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(255,255,255,0.92)",
+    panelBorder: "rgba(255,255,255,0.65)",
+    isDark: false
+  },
+  {
+    id: "orange",
+    name: "Orange",
+    gradient: "linear-gradient(135deg, #FF6A00 0%, #FF9A44 100%)",
+    primary: "#FF6A00",
+    accent: "#00F0FF",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(255,255,255,0.92)",
+    panelBorder: "rgba(255,255,255,0.65)",
+    isDark: false
+  },
+  {
+    id: "lemon",
+    name: "Lemon",
+    gradient: "linear-gradient(135deg, #FFD600 0%, #FFEA8A 100%)",
+    primary: "#FFD600",
+    accent: "#FF6A00",
+    textColor: "rgba(0,0,0,0.85)",
+    textSecondary: "rgba(0,0,0,0.6)",
+    panelBg: "rgba(255,255,255,0.95)",
+    panelBorder: "rgba(0,0,0,0.15)",
+    isDark: false
+  },
+  {
+    id: "lime",
+    name: "Lime",
+    gradient: "linear-gradient(135deg, #32D657 0%, #7AEE9A 100%)",
+    primary: "#32D657",
+    accent: "#00F0FF",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(255,255,255,0.92)",
+    panelBorder: "rgba(255,255,255,0.65)",
+    isDark: false
+  },
+  {
+    id: "bubblegum",
+    name: "Bubblegum",
+    gradient: "linear-gradient(135deg, #FF4ECD 0%, #FF9BE6 100%)",
+    primary: "#FF4ECD",
+    accent: "#00F0FF",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(255,255,255,0.92)",
+    panelBorder: "rgba(255,255,255,0.65)",
+    isDark: false
+  },
+  {
+    id: "cherry",
+    name: "Cherry",
+    gradient: "linear-gradient(135deg, #E6002E 0%, #FF5C7E 100%)",
+    primary: "#E6002E",
+    accent: "#00F0FF",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(255,255,255,0.92)",
+    panelBorder: "rgba(255,255,255,0.65)",
+    isDark: false
+  },
+  {
+    id: "blueraspberry",
+    name: "Blue Raspberry",
+    gradient: "linear-gradient(135deg, #0088FF 0%, #5CBEFF 100%)",
+    primary: "#0088FF",
+    accent: "#00F0FF",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(255,255,255,0.92)",
+    panelBorder: "rgba(255,255,255,0.65)",
+    isDark: false
+  },
+  {
+    id: "cola",
+    name: "Cola",
+    gradient: "linear-gradient(135deg, #3D1E10 0%, #7A4A36 100%)",
+    primary: "#3D1E10",
+    accent: "#FF9A44",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(60,40,30,0.95)",
+    panelBorder: "rgba(255,255,255,0.3)",
+    isDark: true
+  },
+  {
+    id: "vanilla",
+    name: "Vanilla",
+    gradient: "linear-gradient(135deg, #FFF3D6 0%, #FFE0A3 100%)",
+    primary: "#FFF3D6",
+    accent: "#FF6A00",
+    textColor: "rgba(0,0,0,0.85)",
+    textSecondary: "rgba(0,0,0,0.6)",
+    panelBg: "rgba(255,255,255,0.95)",
+    panelBorder: "rgba(0,0,0,0.15)",
+    isDark: false
+  },
+  {
+    id: "mint",
+    name: "Mint",
+    gradient: "linear-gradient(135deg, #B8FFEB 0%, #6FFFD4 100%)",
+    primary: "#B8FFEB",
+    accent: "#0088FF",
+    textColor: "rgba(0,0,0,0.85)",
+    textSecondary: "rgba(0,0,0,0.6)",
+    panelBg: "rgba(255,255,255,0.95)",
+    panelBorder: "rgba(0,0,0,0.15)",
+    isDark: false
+  },
+  {
+    id: "peach",
+    name: "Peach",
+    gradient: "linear-gradient(135deg, #FFAA8A 0%, #FFD1C0 100%)",
+    primary: "#FFAA8A",
+    accent: "#FF6A00",
+    textColor: "rgba(0,0,0,0.85)",
+    textSecondary: "rgba(0,0,0,0.6)",
+    panelBg: "rgba(255,255,255,0.95)",
+    panelBorder: "rgba(0,0,0,0.15)",
+    isDark: false
+  },
+  {
+    id: "tropical",
+    name: "Tropical",
+    gradient: "linear-gradient(135deg, #00D9C0 0%, #6FFFE3 100%)",
+    primary: "#00D9C0",
+    accent: "#FFD600",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(255,255,255,0.92)",
+    panelBorder: "rgba(255,255,255,0.65)",
+    isDark: false
+  },
+  {
+    id: "cottoncandy",
+    name: "Cotton Candy",
+    gradient: "linear-gradient(135deg, #D6B8FF 0%, #EED7FF 100%)",
+    primary: "#D6B8FF",
+    accent: "#FF4ECD",
+    textColor: "rgba(0,0,0,0.85)",
+    textSecondary: "rgba(0,0,0,0.6)",
+    panelBg: "rgba(255,255,255,0.95)",
+    panelBorder: "rgba(0,0,0,0.15)",
+    isDark: false
+  },
+  {
+    id: "darkmode",
+    name: "Dark Mode",
+    gradient: "linear-gradient(135deg, #1A1A2E 0%, #2E2E4A 100%)",
+    primary: "#1A1A2E",
+    accent: "#00F0FF",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.7)",
+    panelBg: "rgba(40,40,60,0.95)",
+    panelBorder: "rgba(255,255,255,0.2)",
+    isDark: true
+  },
+  
+  // NEW 25 THEMES
+  {
+    id: "strawberry",
+    name: "Strawberry",
+    gradient: "linear-gradient(135deg, #FF1744 0%, #FF6E7B 100%)",
+    primary: "#FF1744",
+    accent: "#00F0FF",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(255,255,255,0.92)",
+    panelBorder: "rgba(255,255,255,0.65)",
+    isDark: false
+  },
+  {
+    id: "watermelon",
+    name: "Watermelon",
+    gradient: "linear-gradient(135deg, #FF6B6B 0%, #4ECDC4 100%)",
+    primary: "#FF6B6B",
+    accent: "#4ECDC4",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(255,255,255,0.92)",
+    panelBorder: "rgba(255,255,255,0.65)",
+    isDark: false
+  },
+  {
+    id: "mango",
+    name: "Mango",
+    gradient: "linear-gradient(135deg, #FFA726 0%, #FFD54F 100%)",
+    primary: "#FFA726",
+    accent: "#FF6A00",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(255,255,255,0.92)",
+    panelBorder: "rgba(255,255,255,0.65)",
+    isDark: false
+  },
+  {
+    id: "coconut",
+    name: "Coconut",
+    gradient: "linear-gradient(135deg, #F5F5F5 0%, #E0E0E0 100%)",
+    primary: "#F5F5F5",
+    accent: "#8D6E63",
+    textColor: "rgba(0,0,0,0.85)",
+    textSecondary: "rgba(0,0,0,0.6)",
+    panelBg: "rgba(255,255,255,0.95)",
+    panelBorder: "rgba(0,0,0,0.15)",
+    isDark: false
+  },
+  {
+    id: "pineapple",
+    name: "Pineapple",
+    gradient: "linear-gradient(135deg, #FFD700 0%, #FFA500 100%)",
+    primary: "#FFD700",
+    accent: "#32D657",
+    textColor: "rgba(0,0,0,0.85)",
+    textSecondary: "rgba(0,0,0,0.6)",
+    panelBg: "rgba(255,255,255,0.95)",
+    panelBorder: "rgba(0,0,0,0.15)",
+    isDark: false
+  },
+  {
+    id: "blueberry",
+    name: "Blueberry",
+    gradient: "linear-gradient(135deg, #3F51B5 0%, #7986CB 100%)",
+    primary: "#3F51B5",
+    accent: "#00F0FF",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(255,255,255,0.92)",
+    panelBorder: "rgba(255,255,255,0.65)",
+    isDark: false
+  },
+  {
+    id: "raspberry",
+    name: "Raspberry",
+    gradient: "linear-gradient(135deg, #C2185B 0%, #F06292 100%)",
+    primary: "#C2185B",
+    accent: "#00F0FF",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(255,255,255,0.92)",
+    panelBorder: "rgba(255,255,255,0.65)",
+    isDark: false
+  },
+  {
+    id: "kiwi",
+    name: "Kiwi",
+    gradient: "linear-gradient(135deg, #8BC34A 0%, #CDDC39 100%)",
+    primary: "#8BC34A",
+    accent: "#795548",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(255,255,255,0.92)",
+    panelBorder: "rgba(255,255,255,0.65)",
+    isDark: false
+  },
+  {
+    id: "plum",
+    name: "Plum",
+    gradient: "linear-gradient(135deg, #4A148C 0%, #7B1FA2 100%)",
+    primary: "#4A148C",
+    accent: "#E1BEE7",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(60,30,80,0.95)",
+    panelBorder: "rgba(255,255,255,0.3)",
+    isDark: true
+  },
+  {
+    id: "apricot",
+    name: "Apricot",
+    gradient: "linear-gradient(135deg, #FFAB91 0%, #FFCCBC 100%)",
+    primary: "#FFAB91",
+    accent: "#FF6A00",
+    textColor: "rgba(0,0,0,0.85)",
+    textSecondary: "rgba(0,0,0,0.6)",
+    panelBg: "rgba(255,255,255,0.95)",
+    panelBorder: "rgba(0,0,0,0.15)",
+    isDark: false
+  },
+  {
+    id: "pomegranate",
+    name: "Pomegranate",
+    gradient: "linear-gradient(135deg, #B71C1C 0%, #E53935 100%)",
+    primary: "#B71C1C",
+    accent: "#FFCDD2",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(80,20,20,0.95)",
+    panelBorder: "rgba(255,255,255,0.3)",
+    isDark: true
+  },
+  {
+    id: "dragonfruit",
+    name: "Dragon Fruit",
+    gradient: "linear-gradient(135deg, #FF4081 0%, #E040FB 100%)",
+    primary: "#FF4081",
+    accent: "#69F0AE",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(255,255,255,0.92)",
+    panelBorder: "rgba(255,255,255,0.65)",
+    isDark: false
+  },
+  {
+    id: "passionfruit",
+    name: "Passion Fruit",
+    gradient: "linear-gradient(135deg, #FF9800 0%, #9C27B0 100%)",
+    primary: "#FF9800",
+    accent: "#E1BEE7",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(255,255,255,0.92)",
+    panelBorder: "rgba(255,255,255,0.65)",
+    isDark: false
+  },
+  {
+    id: "caramel",
+    name: "Caramel",
+    gradient: "linear-gradient(135deg, #8D6E63 0%, #D7CCC8 100%)",
+    primary: "#8D6E63",
+    accent: "#FFCC80",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(255,255,255,0.92)",
+    panelBorder: "rgba(255,255,255,0.65)",
+    isDark: false
+  },
+  {
+    id: "honey",
+    name: "Honey",
+    gradient: "linear-gradient(135deg, #FFC107 0%, #FFECB3 100%)",
+    primary: "#FFC107",
+    accent: "#795548",
+    textColor: "rgba(0,0,0,0.85)",
+    textSecondary: "rgba(0,0,0,0.6)",
+    panelBg: "rgba(255,255,255,0.95)",
+    panelBorder: "rgba(0,0,0,0.15)",
+    isDark: false
+  },
+  {
+    id: "chocolate",
+    name: "Chocolate",
+    gradient: "linear-gradient(135deg, #5D4037 0%, #8D6E63 100%)",
+    primary: "#5D4037",
+    accent: "#D7CCC8",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(60,40,30,0.95)",
+    panelBorder: "rgba(255,255,255,0.3)",
+    isDark: true
+  },
+  {
+    id: "cinnamon",
+    name: "Cinnamon",
+    gradient: "linear-gradient(135deg, #A1887F 0%, #D7CCC8 100%)",
+    primary: "#A1887F",
+    accent: "#5D4037",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(255,255,255,0.92)",
+    panelBorder: "rgba(255,255,255,0.65)",
+    isDark: false
+  },
+  {
+    id: "rose",
+    name: "Rose",
+    gradient: "linear-gradient(135deg, #E91E63 0%, #F48FB1 100%)",
+    primary: "#E91E63",
+    accent: "#FCE4EC",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(255,255,255,0.92)",
+    panelBorder: "rgba(255,255,255,0.65)",
+    isDark: false
+  },
+  {
+    id: "lavender",
+    name: "Lavender",
+    gradient: "linear-gradient(135deg, #9C27B0 0%, #CE93D8 100%)",
+    primary: "#9C27B0",
+    accent: "#E1BEE7",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(255,255,255,0.92)",
+    panelBorder: "rgba(255,255,255,0.65)",
+    isDark: false
+  },
+  {
+    id: "ocean",
+    name: "Ocean",
+    gradient: "linear-gradient(135deg, #006064 0%, #00BCD4 100%)",
+    primary: "#006064",
+    accent: "#B2EBF2",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(20,60,70,0.95)",
+    panelBorder: "rgba(255,255,255,0.3)",
+    isDark: true
+  },
+  {
+    id: "forest",
+    name: "Forest",
+    gradient: "linear-gradient(135deg, #1B5E20 0%, #4CAF50 100%)",
+    primary: "#1B5E20",
+    accent: "#C8E6C9",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(20,60,25,0.95)",
+    panelBorder: "rgba(255,255,255,0.3)",
+    isDark: true
+  },
+  {
+    id: "sunset",
+    name: "Sunset",
+    gradient: "linear-gradient(135deg, #FF5722 0%, #FF9800 50%, #FFC107 100%)",
+    primary: "#FF5722",
+    accent: "#FFD54F",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(255,255,255,0.92)",
+    panelBorder: "rgba(255,255,255,0.65)",
+    isDark: false
+  },
+  {
+    id: "galaxy",
+    name: "Galaxy",
+    gradient: "linear-gradient(135deg, #311B92 0%, #7C4DFF 50%, #E040FB 100%)",
+    primary: "#311B92",
+    accent: "#B388FF",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(40,30,80,0.95)",
+    panelBorder: "rgba(255,255,255,0.3)",
+    isDark: true
+  },
+  {
+    id: "neon",
+    name: "Neon",
+    gradient: "linear-gradient(135deg, #76FF03 0%, #00E676 50%, #00B0FF 100%)",
+    primary: "#76FF03",
+    accent: "#FFFF00",
+    textColor: "rgba(0,0,0,0.85)",
+    textSecondary: "rgba(0,0,0,0.6)",
+    panelBg: "rgba(255,255,255,0.95)",
+    panelBorder: "rgba(0,0,0,0.15)",
+    isDark: false
+  },
+  {
+    id: "retro",
+    name: "Retro",
+    gradient: "linear-gradient(135deg, #FF00CC 0%, #333399 100%)",
+    primary: "#FF00CC",
+    accent: "#00FFFF",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(40,20,60,0.95)",
+    panelBorder: "rgba(255,255,255,0.3)",
+    isDark: true
+  },
+  {
+    id: "cyberpunk",
+    name: "Cyberpunk",
+    gradient: "linear-gradient(135deg, #FFD700 0%, #FF0066 50%, #00FFFF 100%)",
+    primary: "#FF0066",
+    accent: "#00FFFF",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(30,20,40,0.95)",
+    panelBorder: "rgba(255,255,255,0.3)",
+    isDark: true
+  },
+  {
+    id: "coffee",
+    name: "Coffee",
+    gradient: "linear-gradient(135deg, #3E2723 0%, #6D4C41 50%, #A1887F 100%)",
+    primary: "#3E2723",
+    accent: "#D7CCC8",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(50,35,30,0.95)",
+    panelBorder: "rgba(255,255,255,0.3)",
+    isDark: true
+  },
+  {
+    id: "sakura",
+    name: "Sakura",
+    gradient: "linear-gradient(135deg, #FCE4EC 0%, #F8BBD9 50%, #F48FB1 100%)",
+    primary: "#F48FB1",
+    accent: "#880E4F",
+    textColor: "rgba(0,0,0,0.85)",
+    textSecondary: "rgba(0,0,0,0.6)",
+    panelBg: "rgba(255,255,255,0.95)",
+    panelBorder: "rgba(0,0,0,0.15)",
+    isDark: false
+  },
+  {
+    id: "aurora",
+    name: "Aurora",
+    gradient: "linear-gradient(135deg, #00BFA5 0%, #00E5FF 50%, #2979FF 100%)",
+    primary: "#00BFA5",
+    accent: "#B2FF59",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(255,255,255,0.92)",
+    panelBorder: "rgba(255,255,255,0.65)",
+    isDark: false
+  },
+  {
+    id: "volcano",
+    name: "Volcano",
+    gradient: "linear-gradient(135deg, #BF360C 0%, #FF3D00 50%, #FF9100 100%)",
+    primary: "#BF360C",
+    accent: "#FFCCBC",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(80,30,15,0.95)",
+    panelBorder: "rgba(255,255,255,0.3)",
+    isDark: true
+  },
+  {
+    id: "midnight",
+    name: "Midnight",
+    gradient: "linear-gradient(135deg, #0D47A1 0%, #1565C0 50%, #1976D2 100%)",
+    primary: "#0D47A1",
+    accent: "#82B1FF",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(20,40,70,0.95)",
+    panelBorder: "rgba(255,255,255,0.3)",
+    isDark: true
+  },
+  {
+    id: "rainbow",
+    name: "Rainbow",
+    gradient: "linear-gradient(135deg, #FF0000 0%, #FF7F00 17%, #FFFF00 33%, #00FF00 50%, #0000FF 67%, #4B0082 83%, #9400D3 100%)",
+    primary: "#FF0066",
+    accent: "#00FFFF",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(255,255,255,0.92)",
+    panelBorder: "rgba(255,255,255,0.65)",
+    isDark: false
+  },
+  {
+    id: "slime",
+    name: "Slime",
+    gradient: "linear-gradient(135deg, #76FF03 0%, #64DD17 50%, #33691E 100%)",
+    primary: "#76FF03",
+    accent: "#B2FF59",
+    textColor: "rgba(0,0,0,0.85)",
+    textSecondary: "rgba(0,0,0,0.6)",
+    panelBg: "rgba(255,255,255,0.95)",
+    panelBorder: "rgba(0,0,0,0.15)",
+    isDark: false
+  },
+  {
+    id: "unicorn",
+    name: "Unicorn",
+    gradient: "linear-gradient(135deg, #E040FB 0%, #FF4081 33%, #FFAB40 66%, #EEFF41 100%)",
+    primary: "#E040FB",
+    accent: "#FFFF00",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(255,255,255,0.92)",
+    panelBorder: "rgba(255,255,255,0.65)",
+    isDark: false
+  },
+  {
+    id: "matrix",
+    name: "Matrix",
+    gradient: "linear-gradient(135deg, #000000 0%, #0D2818 50%, #1B5E20 100%)",
+    primary: "#000000",
+    accent: "#00FF00",
+    textColor: "#00FF00",
+    textSecondary: "rgba(0,255,0,0.7)",
+    panelBg: "rgba(0,10,0,0.95)",
+    panelBorder: "rgba(0,255,0,0.3)",
+    isDark: true
+  },
+  {
+    id: "glitch",
+    name: "Glitch",
+    gradient: "linear-gradient(135deg, #FF0040 0%, #00FF80 50%, #4000FF 100%)",
+    primary: "#FF0040",
+    accent: "#00FF80",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(20,20,20,0.95)",
+    panelBorder: "rgba(255,255,255,0.3)",
+    isDark: true
+  },
+  {
+    id: "creamsicle",
+    name: "Creamsicle",
+    gradient: "linear-gradient(135deg, #FFCC80 0%, #FFE0B2 50%, #FFF3E0 100%)",
+    primary: "#FFCC80",
+    accent: "#FF6A00",
+    textColor: "rgba(0,0,0,0.85)",
+    textSecondary: "rgba(0,0,0,0.6)",
+    panelBg: "rgba(255,255,255,0.95)",
+    panelBorder: "rgba(0,0,0,0.15)",
+    isDark: false
+  },
+  {
+    id: "taffy",
+    name: "Taffy",
+    gradient: "linear-gradient(135deg, #F8BBD0 0%, #E1BEE7 33%, #C5CAE9 66%, #B3E5FC 100%)",
+    primary: "#F8BBD0",
+    accent: "#9C27B0",
+    textColor: "rgba(0,0,0,0.85)",
+    textSecondary: "rgba(0,0,0,0.6)",
+    panelBg: "rgba(255,255,255,0.95)",
+    panelBorder: "rgba(0,0,0,0.15)",
+    isDark: false
+  },
+  {
+    id: "licorice",
+    name: "Licorice",
+    gradient: "linear-gradient(135deg, #212121 0%, #424242 50%, #616161 100%)",
+    primary: "#212121",
+    accent: "#FF1744",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(40,40,40,0.95)",
+    panelBorder: "rgba(255,255,255,0.3)",
+    isDark: true
+  },
+  {
+    id: "butterscotch",
+    name: "Butterscotch",
+    gradient: "linear-gradient(135deg, #D4A574 0%, #E6C9A8 50%, #F5E6D3 100%)",
+    primary: "#D4A574",
+    accent: "#8B4513",
+    textColor: "rgba(0,0,0,0.85)",
+    textSecondary: "rgba(0,0,0,0.6)",
+    panelBg: "rgba(255,255,255,0.95)",
+    panelBorder: "rgba(0,0,0,0.15)",
+    isDark: false
+  },
+  {
+    id: "sourapple",
+    name: "Sour Apple",
+    gradient: "linear-gradient(135deg, #76FF03 0%, #CCFF90 50%, #F0F4C3 100%)",
+    primary: "#76FF03",
+    accent: "#33691E",
+    textColor: "rgba(0,0,0,0.85)",
+    textSecondary: "rgba(0,0,0,0.6)",
+    panelBg: "rgba(255,255,255,0.95)",
+    panelBorder: "rgba(0,0,0,0.15)",
+    isDark: false
+  },
+  {
+    id: "frosting",
+    name: "Frosting",
+    gradient: "linear-gradient(135deg, #FFFFFF 0%, #FFFDE7 50%, #FFF8E1 100%)",
+    primary: "#FFFFFF",
+    accent: "#FFC107",
+    textColor: "rgba(0,0,0,0.85)",
+    textSecondary: "rgba(0,0,0,0.6)",
+    panelBg: "rgba(255,255,255,0.98)",
+    panelBorder: "rgba(0,0,0,0.1)",
+    isDark: false
+  },
+  
+  // 6 NEW CANDY RAINBOW THEMES
+  {
+    id: "rainbowburst",
+    name: "Rainbow Burst",
+    gradient: "linear-gradient(135deg, #FF0080 0%, #FF8C00 20%, #FFD700 40%, #00FF88 60%, #00CCFF 80%, #8B5CF6 100%)",
+    primary: "#FF0080",
+    accent: "#00FF88",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(255,255,255,0.92)",
+    panelBorder: "rgba(255,255,255,0.65)",
+    isDark: false
+  },
+  {
+    id: "candyskies",
+    name: "Candy Skies",
+    gradient: "linear-gradient(135deg, #667eea 0%, #764ba2 25%, #f093fb 50%, #f5576c 75%, #ffd89b 100%)",
+    primary: "#667eea",
+    accent: "#f5576c",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(255,255,255,0.92)",
+    panelBorder: "rgba(255,255,255,0.65)",
+    isDark: false
+  },
+  {
+    id: "tropicalpunch",
+    name: "Tropical Punch",
+    gradient: "linear-gradient(135deg, #FA709A 0%, #FEE140 50%, #FA709A 100%)",
+    primary: "#FA709A",
+    accent: "#FEE140",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(255,255,255,0.92)",
+    panelBorder: "rgba(255,255,255,0.65)",
+    isDark: false
+  },
+  {
+    id: "neonrainbow",
+    name: "Neon Rainbow",
+    gradient: "linear-gradient(135deg, #FF006E 0%, #FB5607 20%, #FFBE0B 40%, #8338EC 60%, #3A86FF 80%, #06FFB4 100%)",
+    primary: "#FF006E",
+    accent: "#06FFB4",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(40,20,60,0.95)",
+    panelBorder: "rgba(255,255,255,0.3)",
+    isDark: true
+  },
+  {
+    id: "sherbet",
+    name: "Sherbet",
+    gradient: "linear-gradient(135deg, #ff9a9e 0%, #fecfef 25%, #fecfef 50%, #a8edea 75%, #fed6e3 100%)",
+    primary: "#ff9a9e",
+    accent: "#a8edea",
+    textColor: "rgba(0,0,0,0.85)",
+    textSecondary: "rgba(0,0,0,0.6)",
+    panelBg: "rgba(255,255,255,0.95)",
+    panelBorder: "rgba(0,0,0,0.15)",
+    isDark: false
+  },
+  {
+    id: "auroraborealis",
+    name: "Aurora Borealis",
+    gradient: "linear-gradient(135deg, #00dbde 0%, #fc00ff 50%, #00dbde 100%)",
+    primary: "#00dbde",
+    accent: "#fc00ff",
+    textColor: "#FFFFFF",
+    textSecondary: "rgba(255,255,255,0.78)",
+    panelBg: "rgba(20,30,60,0.95)",
+    panelBorder: "rgba(255,255,255,0.3)",
+    isDark: true
+  },
+];
+
+export const getThemeById = (id: string): Theme => {
+  return themes.find(t => t.id === id) || themes[0];
+};
+
+export const getRandomTheme = (): Theme => {
+  return themes[Math.floor(Math.random() * themes.length)];
+};

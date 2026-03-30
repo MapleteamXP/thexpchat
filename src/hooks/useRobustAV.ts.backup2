@@ -1,0 +1,1108 @@
+import { useState, useEffect, useRef } from 'react';
+import mqtt from 'mqtt';
+
+interface AVPeer {
+  id: string;
+  connection: RTCPeerConnection;
+  audioStream?: MediaStream;
+  videoStream?: MediaStream;
+  username: string;
+  connected: boolean;
+  lastPing: number;
+  reconnectCount: number;
+  statsInterval?: NodeJS.Timeout;
+  // Buffer ICE candidates until remote description is set
+  iceBuffer: RTCIceCandidateInit[];
+  // Track pending ICE reconnect timeout
+  iceReconnectTimeout?: NodeJS.Timeout;
+}
+
+interface LocalStreams {
+  audio: MediaStream | null;
+  video: MediaStream | null;
+}
+
+type QualityLevel = 'high' | 'medium' | 'low' | 'audio-only';
+
+// Enhanced RTC config with TURN servers for better connectivity
+const RTC_CONFIG: RTCConfiguration = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
+    // Free TURN servers for better NAT traversal
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+  ],
+  iceCandidatePoolSize: 10,
+  bundlePolicy: 'max-bundle' as RTCBundlePolicy,
+  rtcpMuxPolicy: 'require' as RTCRtcpMuxPolicy,
+  iceTransportPolicy: 'all',
+};
+
+// Adaptive audio constraints
+const getAudioConstraints = (quality: QualityLevel): MediaTrackConstraints => ({
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+  sampleRate: quality === 'high' ? 48000 : 44100,
+  channelCount: quality === 'audio-only' ? 1 : 2,
+});
+
+// Adaptive video constraints based on quality level and device
+const getVideoConstraints = (quality: QualityLevel, isMobile: boolean): MediaTrackConstraints => {
+  const constraints: MediaTrackConstraints = {
+    facingMode: 'user',
+  };
+
+  if (quality === 'high' && !isMobile) {
+    constraints.width = { ideal: 1280, max: 1920 };
+    constraints.height = { ideal: 720, max: 1080 };
+    constraints.frameRate = { ideal: 30, max: 60 };
+  } else if (quality === 'medium' || isMobile) {
+    constraints.width = { ideal: 640, max: 1280 };
+    constraints.height = { ideal: 480, max: 720 };
+    constraints.frameRate = { ideal: 24, max: 30 };
+  } else {
+    // low quality
+    constraints.width = { ideal: 480, max: 640 };
+    constraints.height = { ideal: 360, max: 480 };
+    constraints.frameRate = { ideal: 15, max: 24 };
+  }
+
+  return constraints;
+};
+
+// Get audio bitrate based on quality
+const getAudioBitrate = (quality: QualityLevel): number => {
+  switch (quality) {
+    case 'high': return 256000;
+    case 'medium': return 128000;
+    case 'low': return 64000;
+    case 'audio-only': return 64000;
+    default: return 128000;
+  }
+};
+
+// Get video bitrate based on quality
+const getVideoBitrate = (quality: QualityLevel): number => {
+  switch (quality) {
+    case 'high': return 1500000;
+    case 'medium': return 800000;
+    case 'low': return 400000;
+    default: return 800000;
+  }
+};
+
+export function useRobustAV(roomCode: string, localUsername: string, isActive: boolean) {
+  const [isAudioEnabled, setIsAudioEnabled] = useState(false);
+  const [isVideoEnabled, setIsVideoEnabled] = useState(false);
+  const [peers, setPeers] = useState<Map<string, AVPeer>>(new Map());
+  const [localVideoStream, setLocalVideoStream] = useState<MediaStream | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [connectionQuality, setConnectionQuality] = useState<QualityLevel>('medium');
+  const [isReconnecting, setIsReconnecting] = useState(false);
+  
+  const localStreamsRef = useRef<LocalStreams>({ audio: null, video: null });
+  const clientRef = useRef<mqtt.MqttClient | null>(null);
+  const myIdRef = useRef<string>(`av-${Math.random().toString(36).substr(2, 9)}`);
+  const peersRef = useRef<Map<string, AVPeer>>(new Map());
+  const reconnectAttemptsRef = useRef<Map<string, number>>(new Map());
+  const pingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const healthCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const qualityMonitorRef = useRef<NodeJS.Timeout | null>(null);
+  const isMobileRef = useRef<boolean>(false);
+  const networkQualityRef = useRef<{ packetsLost: number; jitter: number; rtt: number }>({ packetsLost: 0, jitter: 0, rtt: 0 });
+  // Track if we're currently creating an offer to avoid glare
+  const makingOfferRef = useRef<Set<string>>(new Set());
+  const stableConnectionRef = useRef<Map<string, boolean>>(new Map());
+  const lastIceRestartRef = useRef<Map<string, number>>(new Map());
+  const qualityChangeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const currentQualityRef = useRef<QualityLevel>('medium');
+
+  // Detect mobile device
+  useEffect(() => {
+    const checkMobile = () => {
+      const userAgent = navigator.userAgent.toLowerCase();
+      isMobileRef.current = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(userAgent);
+    };
+    checkMobile();
+  }, []);
+
+  // Keep ref in sync with state
+  useEffect(() => {
+    currentQualityRef.current = connectionQuality;
+  }, [connectionQuality]);
+
+  // Monitor network quality and adjust
+  const monitorConnectionQuality = async (peerId: string) => {
+    const peer = peersRef.current.get(peerId);
+    if (!peer || !peer.connection) return;
+
+    try {
+      const stats = await peer.connection.getStats();
+      let packetsLost = 0;
+      let packetsReceived = 1;
+      let jitter = 0;
+      let rtt = 0;
+
+      stats.forEach((report: any) => {
+        if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+          packetsLost = report.packetsLost || 0;
+          packetsReceived = report.packetsReceived || 1;
+          jitter = report.jitter || 0;
+        }
+        if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+          rtt = report.currentRoundTripTime || 0;
+        }
+      });
+
+      const lossRate = packetsLost / (packetsLost + packetsReceived);
+      
+      networkQualityRef.current = {
+        packetsLost: lossRate,
+        jitter,
+        rtt,
+      };
+
+      // Adjust quality based on network conditions
+      if (lossRate > 0.1 || rtt > 0.3) {
+        setConnectionQuality('low');
+      } else if (lossRate > 0.05 || rtt > 0.15) {
+        setConnectionQuality('medium');
+      } else {
+        setConnectionQuality('high');
+      }
+    } catch (e) {
+      console.log('Stats error:', e);
+    }
+  };
+
+  // Connect to MQTT for AV signaling
+  useEffect(() => {
+    if (!isActive || !roomCode) return;
+
+    const client = mqtt.connect('wss://broker.hivemq.com:8884/mqtt', {
+      clientId: myIdRef.current,
+      clean: true,
+      connectTimeout: 30000,
+      reconnectPeriod: 3000,
+      keepalive: 20,
+    });
+    
+    clientRef.current = client;
+
+    client.on('connect', () => {
+      console.log('AV MQTT connected');
+      client.subscribe(`xpav/${roomCode}/#`);
+      setIsReconnecting(false);
+      
+      // CRITICAL FIX: Re-announce our presence if AV is active
+      // This ensures peers know we're back after an MQTT reconnect
+      if (localStreamsRef.current.audio || localStreamsRef.current.video) {
+        setTimeout(() => {
+          broadcastJoin();
+          // Also re-initiate connections to known peers
+          peersRef.current.forEach((peer, peerId) => {
+            if (!peer.connected) {
+              reconnectPeer(peerId);
+            }
+          });
+        }, 500);
+      }
+      
+      // Ping interval (5 seconds) for stability - reduced from 3s to prevent thrashing
+      if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
+      pingIntervalRef.current = setInterval(() => {
+        broadcastPing();
+      }, 5000);
+      
+      // Health check (8 seconds) - increased from 5s
+      if (healthCheckIntervalRef.current) clearInterval(healthCheckIntervalRef.current);
+      healthCheckIntervalRef.current = setInterval(() => {
+        checkConnectionHealth();
+      }, 8000);
+
+      // Quality monitoring (15 seconds) - increased from 10s
+      if (qualityMonitorRef.current) clearInterval(qualityMonitorRef.current);
+      qualityMonitorRef.current = setInterval(() => {
+        peersRef.current.forEach((peer, peerId) => {
+          if (peer.connected) {
+            monitorConnectionQuality(peerId);
+          }
+        });
+      }, 15000);
+    });
+
+    client.on('message', async (_topic, payload) => {
+      try {
+        const data = JSON.parse(payload.toString());
+        if (data.from === myIdRef.current) return;
+
+        switch (data.type) {
+          case 'av-join':
+            if (localStreamsRef.current.audio || localStreamsRef.current.video) {
+              // Add small delay to reduce offer/answer collision (glare)
+              setTimeout(() => {
+                initiateConnection(data.from, data.username);
+              }, Math.random() * 500);
+            }
+            break;
+          case 'av-offer':
+            await handleOffer(data.offer, data.from, data.username);
+            break;
+          case 'av-answer':
+            await handleAnswer(data.answer, data.from);
+            break;
+          case 'av-ice':
+            await handleIceCandidate(data.candidate, data.from);
+            break;
+          case 'av-ping':
+            handlePing(data.from);
+            break;
+          case 'av-reconnect':
+            await handleReconnectRequest(data.from, data.username);
+            break;
+          case 'av-quality-change':
+            console.log('Peer changed quality:', data.quality);
+            break;
+          case 'av-leave':
+            handlePeerLeave(data.from);
+            break;
+        }
+      } catch (e) {
+        console.error('AV message error:', e);
+      }
+    });
+
+    client.on('disconnect', () => {
+      console.log('AV MQTT disconnected');
+      setIsReconnecting(true);
+    });
+
+    client.on('error', (err) => {
+      console.error('AV MQTT error:', err);
+    });
+
+    client.on('reconnect', () => {
+      console.log('AV MQTT reconnecting...');
+      setIsReconnecting(true);
+    });
+
+    return () => {
+      cleanup();
+      client.end();
+    };
+  }, [isActive, roomCode]);
+
+  const broadcastPing = () => {
+    if (!clientRef.current?.connected) return;
+    
+    clientRef.current.publish(
+      `xpav/${roomCode}/ping`,
+      JSON.stringify({
+        type: 'av-ping',
+        from: myIdRef.current,
+        timestamp: Date.now(),
+        quality: connectionQuality,
+        hasAudio: !!localStreamsRef.current.audio,
+        hasVideo: !!localStreamsRef.current.video,
+      })
+    );
+  };
+
+  const broadcastLeave = () => {
+    if (!clientRef.current?.connected) return;
+    
+    clientRef.current.publish(
+      `xpav/${roomCode}/leave`,
+      JSON.stringify({
+        type: 'av-leave',
+        from: myIdRef.current,
+        username: localUsername,
+      })
+    );
+  };
+
+  const handlePing = (from: string) => {
+    const peer = peersRef.current.get(from);
+    if (peer) {
+      peer.lastPing = Date.now();
+      peersRef.current.set(from, peer);
+      // If peer was marked disconnected but pinged again, try to reconnect
+      if (!peer.connected && (localStreamsRef.current.audio || localStreamsRef.current.video)) {
+        setTimeout(() => reconnectPeer(from), 500);
+      }
+    } else if (localStreamsRef.current.audio || localStreamsRef.current.video) {
+      // We have AV on but don't know this peer — they might have reconnected
+      // Don't auto-initiate here to avoid spam, wait for their av-join
+    }
+  };
+
+  const handlePeerLeave = (from: string) => {
+    console.log('Peer left AV:', from);
+    const peer = peersRef.current.get(from);
+    if (peer) {
+      cleanupPeer(peer);
+      peersRef.current.delete(from);
+      setPeers(new Map(peersRef.current));
+      reconnectAttemptsRef.current.delete(from);
+      makingOfferRef.current.delete(from);
+      stableConnectionRef.current.delete(from);
+      lastIceRestartRef.current.delete(from);
+    }
+  };
+
+  const cleanupPeer = (peer: AVPeer) => {
+    try {
+      if (peer.statsInterval) clearInterval(peer.statsInterval);
+      if (peer.iceReconnectTimeout) clearTimeout(peer.iceReconnectTimeout);
+      peer.connection.close();
+    } catch (e) {}
+    const audioEl = document.getElementById(`av-audio-${peer.id}`);
+    if (audioEl) audioEl.remove();
+  };
+
+  const checkConnectionHealth = () => {
+    const now = Date.now();
+    let needsUpdate = false;
+    
+    peersRef.current.forEach((peer, peerId) => {
+      // FIX: Increased timeout from 10s to 25s to be more forgiving on public MQTT
+      if (now - peer.lastPing > 25000 && peer.connected) {
+        console.log('Peer stale, marking disconnected:', peerId);
+        peer.connected = false;
+        peersRef.current.set(peerId, peer);
+        needsUpdate = true;
+        
+        // Try to reconnect
+        setTimeout(() => {
+          if (localStreamsRef.current.audio || localStreamsRef.current.video) {
+            reconnectPeer(peerId);
+          }
+        }, 500);
+      }
+      
+      // Check connection state
+      const pc = peer.connection;
+      if (pc) {
+        if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
+          console.log('Connection failed for:', peerId, '- attempting reconnect');
+          reconnectPeer(peerId);
+        }
+        
+        // Also check ICE state
+        if (pc.iceConnectionState === 'failed') {
+          console.log('ICE failed for:', peerId, '- restarting ICE');
+          pc.restartIce();
+        }
+      }
+    });
+    
+    if (needsUpdate) {
+      setPeers(new Map(peersRef.current));
+    }
+  };
+
+  const reconnectPeer = async (peerId: string) => {
+    const peer = peersRef.current.get(peerId);
+    if (!peer) return;
+    
+    const attempts = reconnectAttemptsRef.current.get(peerId) || 0;
+    if (attempts > 5) {
+      console.log('Max reconnection attempts reached for:', peerId);
+      return;
+    }
+    
+    reconnectAttemptsRef.current.set(peerId, attempts + 1);
+    makingOfferRef.current.delete(peerId);
+    stableConnectionRef.current.delete(peerId);
+    
+    // Cleanup old connection
+    cleanupPeer(peer);
+    
+    // Remove from map so we start fresh
+    peersRef.current.delete(peerId);
+    setPeers(new Map(peersRef.current));
+    
+    // Wait then reconnect
+    setTimeout(() => {
+      if (localStreamsRef.current.audio || localStreamsRef.current.video) {
+        initiateConnection(peerId, peer.username);
+      }
+    }, 1500);
+  };
+
+  const handleReconnectRequest = async (from: string, username: string) => {
+    console.log('Received reconnect request from:', from);
+    handlePeerLeave(from);
+    
+    if (localStreamsRef.current.audio || localStreamsRef.current.video) {
+      await createPeerConnection(from, username, true);
+    }
+  };
+
+  const initiateConnection = async (peerId: string, peerUsername: string) => {
+    console.log('Initiating connection to:', peerId);
+    // Prevent duplicate connection attempts
+    if (makingOfferRef.current.has(peerId)) {
+      console.log('Already making offer to', peerId, '- skipping');
+      return;
+    }
+    await createPeerConnection(peerId, peerUsername, true);
+  };
+
+  const createPeerConnection = async (peerId: string, peerUsername: string, isInitiator: boolean): Promise<RTCPeerConnection | null> => {
+    console.log('Creating AV peer:', peerId, 'initiator:', isInitiator);
+    
+    // Close existing connection completely
+    const existing = peersRef.current.get(peerId);
+    if (existing) {
+      try {
+        if (existing.statsInterval) clearInterval(existing.statsInterval);
+        existing.connection.close();
+      } catch (e) {}
+      const audioEl = document.getElementById(`av-audio-${peerId}`);
+      if (audioEl) audioEl.remove();
+      peersRef.current.delete(peerId);
+      makingOfferRef.current.delete(peerId);
+    }
+
+    try {
+      const pc = new RTCPeerConnection(RTC_CONFIG);
+
+      // Add audio tracks with adaptive bitrate
+      if (localStreamsRef.current.audio) {
+        localStreamsRef.current.audio.getAudioTracks().forEach(track => {
+          const sender = pc.addTrack(track, localStreamsRef.current.audio!);
+          applyBitrateConstraint(sender, 'audio');
+        });
+      }
+
+      // Add video tracks with adaptive quality
+      if (localStreamsRef.current.video) {
+        localStreamsRef.current.video.getVideoTracks().forEach(track => {
+          const sender = pc.addTrack(track, localStreamsRef.current.video!);
+          applyBitrateConstraint(sender, 'video');
+        });
+      }
+
+      // Handle renegotiation when tracks are added later
+      pc.onnegotiationneeded = async () => {
+        try {
+          makingOfferRef.current.add(peerId);
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          await waitForIceGathering(pc, 8000);
+          const finalOffer = pc.localDescription;
+          if (finalOffer && clientRef.current?.connected) {
+            clientRef.current.publish(
+              `xpav/${roomCode}/offer`,
+              JSON.stringify({
+                type: 'av-offer',
+                from: myIdRef.current,
+                to: peerId,
+                offer: finalOffer,
+                username: localUsername,
+                quality: connectionQuality,
+              })
+            );
+          }
+        } catch (err) {
+          console.error('Renegotiation error:', err);
+        } finally {
+          makingOfferRef.current.delete(peerId);
+        }
+      };
+
+      // ICE handling
+      pc.onicecandidate = (event) => {
+        if (event.candidate && clientRef.current?.connected) {
+          clientRef.current.publish(
+            `xpav/${roomCode}/ice`,
+            JSON.stringify({
+              type: 'av-ice',
+              from: myIdRef.current,
+              to: peerId,
+              candidate: event.candidate,
+            })
+          );
+        }
+      };
+
+      // ICE connection state monitoring with rate-limited restart
+      pc.oniceconnectionstatechange = () => {
+        console.log('ICE state for', peerId, ':', pc.iceConnectionState);
+        const now = Date.now();
+        const lastRestart = lastIceRestartRef.current.get(peerId) || 0;
+        
+        if (pc.iceConnectionState === 'failed' && now - lastRestart > 10000) {
+          console.log('ICE failed for', peerId, '- restarting ICE');
+          lastIceRestartRef.current.set(peerId, now);
+          try {
+            pc.restartIce();
+          } catch (e) {
+            console.log('ICE restart failed, will reconnect peer');
+            reconnectPeer(peerId);
+          }
+        } else if (pc.iceConnectionState === 'disconnected') {
+          console.log('ICE disconnected for', peerId);
+          // Wait longer before reconnect to avoid flickering
+          const reconnectTimeout = setTimeout(() => {
+            if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+              reconnectPeer(peerId);
+            }
+          }, 8000);
+          
+          // Store timeout on peer for cleanup
+          peer.iceReconnectTimeout = reconnectTimeout as any;
+        } else if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+          // Clear any pending reconnect
+          if (peer.iceReconnectTimeout) {
+            clearTimeout(peer.iceReconnectTimeout);
+            peer.iceReconnectTimeout = undefined;
+          }
+          lastIceRestartRef.current.delete(peerId);
+        }
+      };
+
+      // Handle remote streams
+      pc.ontrack = (event) => {
+        console.log('Received track from:', peerId, 'kind:', event.track.kind);
+        const [stream] = event.streams;
+        const peer = peersRef.current.get(peerId);
+        
+        if (peer) {
+          if (event.track.kind === 'audio') {
+            peer.audioStream = stream;
+            playAudio(peerId, stream);
+          } else if (event.track.kind === 'video') {
+            peer.videoStream = stream;
+          }
+          peer.connected = true;
+          peer.lastPing = Date.now();
+          peersRef.current.set(peerId, peer);
+          setPeers(new Map(peersRef.current));
+          
+          reconnectAttemptsRef.current.set(peerId, 0);
+        }
+      };
+
+      // Connection state monitoring
+      pc.onconnectionstatechange = () => {
+        console.log('Connection state for', peerId, ':', pc.connectionState);
+        const peer = peersRef.current.get(peerId);
+        
+        if (peer) {
+          if (pc.connectionState === 'connected') {
+            peer.connected = true;
+            peer.lastPing = Date.now();
+            reconnectAttemptsRef.current.set(peerId, 0);
+            stableConnectionRef.current.set(peerId, true);
+            
+            // Start stats monitoring for this peer - less frequent
+            if (peer.statsInterval) clearInterval(peer.statsInterval);
+            peer.statsInterval = setInterval(() => {
+              monitorConnectionQuality(peerId);
+            }, 10000);
+            
+          } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+            peer.connected = false;
+            setTimeout(() => reconnectPeer(peerId), 2000);
+          } else if (pc.connectionState === 'closed') {
+            if (peer.statsInterval) clearInterval(peer.statsInterval);
+          }
+          
+          peersRef.current.set(peerId, peer);
+          setPeers(new Map(peersRef.current));
+        }
+      };
+
+      // Store peer
+      const peer: AVPeer = { 
+        id: peerId, 
+        connection: pc,
+        username: peerUsername,
+        connected: false,
+        lastPing: Date.now(),
+        reconnectCount: 0,
+        iceBuffer: [],
+      };
+      peersRef.current.set(peerId, peer);
+      setPeers(new Map(peersRef.current));
+
+      // Create offer if initiator
+      if (isInitiator) {
+        try {
+          makingOfferRef.current.add(peerId);
+          const offer = await pc.createOffer({
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: true,
+          });
+          await pc.setLocalDescription(offer);
+          
+          await waitForIceGathering(pc, 8000);
+          
+          const finalOffer = pc.localDescription;
+          if (finalOffer && clientRef.current?.connected) {
+            clientRef.current.publish(
+              `xpav/${roomCode}/offer`,
+              JSON.stringify({
+                type: 'av-offer',
+                from: myIdRef.current,
+                to: peerId,
+                offer: finalOffer,
+                username: localUsername,
+                quality: currentQualityRef.current,
+              })
+            );
+            console.log('Sent offer to:', peerId);
+          }
+        } catch (err) {
+          console.error('Offer error:', err);
+        } finally {
+          makingOfferRef.current.delete(peerId);
+        }
+      }
+
+      return pc;
+    } catch (err) {
+      console.error('Error creating peer connection:', err);
+      return null;
+    }
+  };
+
+  const applyBitrateConstraint = (sender: RTCRtpSender, kind: 'audio' | 'video', quality?: QualityLevel) => {
+    const params = sender.getParameters();
+    const targetQuality = quality || currentQualityRef.current;
+    if (params.encodings && params.encodings[0]) {
+      if (kind === 'audio') {
+        params.encodings[0].maxBitrate = getAudioBitrate(targetQuality);
+        params.encodings[0].priority = 'high';
+      } else {
+        params.encodings[0].maxBitrate = getVideoBitrate(targetQuality);
+        params.encodings[0].priority = 'medium';
+      }
+      sender.setParameters(params).catch(console.error);
+    }
+  };
+
+  const waitForIceGathering = (pc: RTCPeerConnection, timeout: number): Promise<void> => {
+    return new Promise((resolve) => {
+      if (pc.iceGatheringState === 'complete') {
+        resolve();
+        return;
+      }
+      
+      const checkState = () => {
+        if (pc.iceGatheringState === 'complete') {
+          resolve();
+        }
+      };
+      
+      pc.addEventListener('icegatheringstatechange', checkState);
+      setTimeout(() => {
+        pc.removeEventListener('icegatheringstatechange', checkState);
+        resolve();
+      }, timeout);
+    });
+  };
+
+  const handleOffer = async (offer: RTCSessionDescriptionInit, from: string, username: string) => {
+    console.log('Received offer from:', from);
+    
+    if (!localStreamsRef.current.audio && !localStreamsRef.current.video) {
+      console.log('No local streams, ignoring offer');
+      return;
+    }
+
+    const existing = peersRef.current.get(from);
+    
+    // GLARE AVOIDANCE: If we already sent an offer to this peer, 
+    // the peer with the lexicographically smaller ID answers.
+    if (existing && makingOfferRef.current.has(from)) {
+      if (myIdRef.current < from) {
+        console.log('Glare detected, but my ID is lower. Ignoring offer, waiting for answer.');
+        return;
+      } else {
+        console.log('Glare detected, my ID is higher. Switching to answerer.');
+        makingOfferRef.current.delete(from);
+        try {
+          if (existing.statsInterval) clearInterval(existing.statsInterval);
+          existing.connection.close();
+        } catch (e) {}
+        peersRef.current.delete(from);
+      }
+    }
+
+    const pc = await createPeerConnection(from, username, false);
+    if (!pc) return;
+    
+    try {
+      await pc.setRemoteDescription(offer);
+      
+      // Process any buffered ICE candidates
+      const peer = peersRef.current.get(from);
+      if (peer && peer.iceBuffer.length > 0) {
+        for (const candidate of peer.iceBuffer) {
+          try {
+            await pc.addIceCandidate(candidate);
+          } catch (e) {
+            console.error('Buffered ICE error:', e);
+          }
+        }
+        peer.iceBuffer = [];
+      }
+      
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      
+      await waitForIceGathering(pc, 8000);
+      
+      const finalAnswer = pc.localDescription;
+      if (finalAnswer && clientRef.current?.connected) {
+        clientRef.current.publish(
+          `xpav/${roomCode}/answer`,
+          JSON.stringify({
+            type: 'av-answer',
+            from: myIdRef.current,
+            to: from,
+            answer: finalAnswer,
+            quality: connectionQuality,
+          })
+        );
+        console.log('Sent answer to:', from);
+      }
+    } catch (err) {
+      console.error('Answer error:', err);
+    }
+  };
+
+  const handleAnswer = async (answer: RTCSessionDescriptionInit, from: string) => {
+    console.log('Received answer from:', from);
+    makingOfferRef.current.delete(from);
+    const peer = peersRef.current.get(from);
+    if (peer) {
+      try {
+        await peer.connection.setRemoteDescription(answer);
+        console.log('Set remote description for:', from);
+        
+        // Process buffered ICE candidates
+        if (peer.iceBuffer.length > 0) {
+          for (const candidate of peer.iceBuffer) {
+            try {
+              await peer.connection.addIceCandidate(candidate);
+            } catch (e) {
+              console.error('Buffered ICE error:', e);
+            }
+          }
+          peer.iceBuffer = [];
+        }
+      } catch (err) {
+        console.error('Set remote desc error:', err);
+      }
+    }
+  };
+
+  const handleIceCandidate = async (candidate: RTCIceCandidateInit, from: string) => {
+    const peer = peersRef.current.get(from);
+    if (!peer || !candidate) return;
+    
+    // Buffer candidate if remote description isn't set yet
+    if (!peer.connection.remoteDescription) {
+      peer.iceBuffer.push(candidate);
+      return;
+    }
+    
+    try {
+      await peer.connection.addIceCandidate(candidate);
+    } catch (err) {
+      console.error('ICE error:', err);
+    }
+  };
+
+  const playAudio = (peerId: string, stream: MediaStream) => {
+    const existing = document.getElementById(`av-audio-${peerId}`);
+    if (existing) existing.remove();
+    
+    const audio = document.createElement('audio');
+    audio.id = `av-audio-${peerId}`;
+    audio.srcObject = stream;
+    audio.autoplay = true;
+    audio.volume = 1.0;
+    audio.muted = false;
+    
+    // Ensure audio plays with retry
+    const tryPlay = () => {
+      audio.play().catch(err => {
+        console.log('Audio play failed, will retry on interaction:', err);
+      });
+    };
+    
+    tryPlay();
+    
+    // Also retry on any user interaction
+    const interactionHandler = () => {
+      tryPlay();
+      document.removeEventListener('click', interactionHandler);
+      document.removeEventListener('touchstart', interactionHandler);
+    };
+    
+    document.addEventListener('click', interactionHandler, { once: true });
+    document.addEventListener('touchstart', interactionHandler, { once: true });
+    
+    document.body.appendChild(audio);
+    console.log('Playing audio from:', peerId);
+  };
+
+  // Enable audio with adaptive quality - uses ref for immediate access
+  const enableAudio = async (targetQuality?: QualityLevel): Promise<boolean> => {
+    try {
+      setError(null);
+      const quality = targetQuality || currentQualityRef.current;
+      console.log('Enabling audio with quality:', quality);
+      
+      // Stop existing audio tracks
+      if (localStreamsRef.current.audio) {
+        localStreamsRef.current.audio.getTracks().forEach(t => {
+          t.stop();
+          // Remove from all peer connections
+          peersRef.current.forEach((peer) => {
+            const senders = peer.connection.getSenders();
+            senders.forEach(sender => {
+              if (sender.track && sender.track.kind === 'audio') {
+                try {
+                  peer.connection.removeTrack(sender);
+                } catch (e) {
+                  // Track might already be removed
+                }
+              }
+            });
+          });
+        });
+        localStreamsRef.current.audio = null;
+      }
+      
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: getAudioConstraints(quality),
+        video: false,
+      });
+      
+      localStreamsRef.current.audio = stream;
+      setIsAudioEnabled(true);
+      
+      // Add to existing peer connections with proper bitrate
+      peersRef.current.forEach((peer) => {
+        stream.getTracks().forEach(track => {
+          const sender = peer.connection.addTrack(track, stream);
+          applyBitrateConstraint(sender, 'audio', quality);
+        });
+      });
+      
+      broadcastJoin();
+      
+      return true;
+    } catch (err) {
+      console.error('Audio error:', err);
+      setError('Microphone access denied');
+      setIsAudioEnabled(false);
+      return false;
+    }
+  };
+
+  // Enable video with adaptive quality - uses ref for immediate access
+  const enableVideo = async (targetQuality?: QualityLevel): Promise<boolean> => {
+    try {
+      setError(null);
+      const quality = targetQuality || currentQualityRef.current;
+      console.log('Enabling video with quality:', quality);
+      
+      // Stop existing video tracks
+      if (localStreamsRef.current.video) {
+        localStreamsRef.current.video.getTracks().forEach(t => {
+          t.stop();
+          // Remove from all peer connections
+          peersRef.current.forEach((peer) => {
+            const senders = peer.connection.getSenders();
+            senders.forEach(sender => {
+              if (sender.track && sender.track.kind === 'video') {
+                try {
+                  peer.connection.removeTrack(sender);
+                } catch (e) {
+                  // Track might already be removed
+                }
+              }
+            });
+          });
+        });
+        localStreamsRef.current.video = null;
+        setLocalVideoStream(null);
+      }
+      
+      // Don't start video if audio-only mode
+      if (quality === 'audio-only') {
+        setIsVideoEnabled(false);
+        return true;
+      }
+      
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: getVideoConstraints(quality, isMobileRef.current),
+      });
+      
+      localStreamsRef.current.video = stream;
+      setLocalVideoStream(stream);
+      setIsVideoEnabled(true);
+      
+      // Add to existing peer connections with proper bitrate
+      peersRef.current.forEach((peer) => {
+        stream.getTracks().forEach(track => {
+          const sender = peer.connection.addTrack(track, stream);
+          applyBitrateConstraint(sender, 'video', quality);
+        });
+      });
+      
+      broadcastJoin();
+      
+      return true;
+    } catch (err) {
+      console.error('Video error:', err);
+      setError('Camera access denied');
+      setIsVideoEnabled(false);
+      return false;
+    }
+  };
+
+  const broadcastJoin = () => {
+    if (clientRef.current?.connected) {
+      clientRef.current.publish(
+        `xpav/${roomCode}/join`,
+        JSON.stringify({
+          type: 'av-join',
+          from: myIdRef.current,
+          username: localUsername,
+          quality: connectionQuality,
+        })
+      );
+    }
+  };
+
+  const disableAudio = () => {
+    console.log('Disabling audio...');
+    
+    if (localStreamsRef.current.audio) {
+      localStreamsRef.current.audio.getTracks().forEach(t => t.stop());
+      localStreamsRef.current.audio = null;
+    }
+    setIsAudioEnabled(false);
+    broadcastLeave();
+  };
+
+  const disableVideo = () => {
+    console.log('Disabling video...');
+    
+    if (localStreamsRef.current.video) {
+      localStreamsRef.current.video.getTracks().forEach(t => t.stop());
+      localStreamsRef.current.video = null;
+    }
+    setLocalVideoStream(null);
+    setIsVideoEnabled(false);
+    broadcastLeave();
+  };
+
+  const toggleAudio = async (): Promise<boolean> => {
+    if (isAudioEnabled) {
+      disableAudio();
+      return false;
+    }
+    return await enableAudio();
+  };
+
+  const toggleVideo = async (): Promise<boolean> => {
+    if (isVideoEnabled) {
+      disableVideo();
+      return false;
+    }
+    return await enableVideo();
+  };
+
+  // Manual quality adjustment with debouncing - FIXED to properly apply new quality
+  const setQuality = (quality: QualityLevel) => {
+    if (qualityChangeTimeoutRef.current) {
+      clearTimeout(qualityChangeTimeoutRef.current);
+    }
+    
+    qualityChangeTimeoutRef.current = setTimeout(() => {
+      // Update ref immediately so enableAudio/enableVideo use correct quality
+      currentQualityRef.current = quality;
+      setConnectionQuality(quality);
+      
+      // Notify peers about quality change
+      if (clientRef.current?.connected) {
+        clientRef.current.publish(
+          `xpav/${roomCode}/quality`,
+          JSON.stringify({
+            type: 'av-quality-change',
+            from: myIdRef.current,
+            quality: quality,
+          })
+        );
+      }
+      
+      // Re-enable streams with new quality - pass quality explicitly
+      if (isAudioEnabled) {
+        enableAudio(quality);
+      }
+      if (isVideoEnabled) {
+        enableVideo(quality);
+      }
+    }, 300);
+  };
+
+  const cleanup = () => {
+    console.log('Cleaning up AV...');
+    
+    broadcastLeave();
+    
+    if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
+    if (healthCheckIntervalRef.current) clearInterval(healthCheckIntervalRef.current);
+    if (qualityMonitorRef.current) clearInterval(qualityMonitorRef.current);
+    if (qualityChangeTimeoutRef.current) clearTimeout(qualityChangeTimeoutRef.current);
+    
+    disableAudio();
+    disableVideo();
+    
+    peersRef.current.forEach((peer) => {
+      cleanupPeer(peer);
+    });
+    peersRef.current.clear();
+    setPeers(new Map());
+    makingOfferRef.current.clear();
+    stableConnectionRef.current.clear();
+    lastIceRestartRef.current.clear();
+    currentQualityRef.current = 'medium';
+  };
+
+  return {
+    isAudioEnabled,
+    isVideoEnabled,
+    localVideoStream,
+    peers,
+    error,
+    connectionQuality,
+    isReconnecting,
+    toggleAudio,
+    toggleVideo,
+    setQuality,
+  };
+}
