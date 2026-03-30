@@ -85,12 +85,56 @@ function App() {
     toggleVideo,
     setQuality,
     getDiagnostics,
+    globalAudioUnlock,
   } = useRobustAV(roomCode, username, currentView === 'chat');
+
+  // Track if user has interacted (required for audio)
+  const [hasUserInteracted, setHasUserInteracted] = useState(false);
+  const [audioBlocked, setAudioBlocked] = useState(false);
+
+  // Global audio unlock on first user interaction
+  useEffect(() => {
+    const handleFirstInteraction = async () => {
+      if (!hasUserInteracted) {
+        console.log('👆 User interaction detected - unlocking audio...');
+        setHasUserInteracted(true);
+        await globalAudioUnlock();
+        
+        // Check if audio is still blocked
+        setTimeout(() => {
+          const audioElements = document.querySelectorAll('audio');
+          let anyPlaying = false;
+          audioElements.forEach((audio: HTMLAudioElement) => {
+            if (!audio.paused && !audio.muted) {
+              anyPlaying = true;
+            }
+          });
+          if (!anyPlaying && avPeers.size > 0) {
+            setAudioBlocked(true);
+          }
+        }, 1000);
+      }
+    };
+
+    document.addEventListener('click', handleFirstInteraction, { once: true });
+    document.addEventListener('touchstart', handleFirstInteraction, { once: true });
+    document.addEventListener('keydown', handleFirstInteraction, { once: true });
+
+    return () => {
+      document.removeEventListener('click', handleFirstInteraction);
+      document.removeEventListener('touchstart', handleFirstInteraction);
+      document.removeEventListener('keydown', handleFirstInteraction);
+    };
+  }, [hasUserInteracted, globalAudioUnlock, avPeers.size]);
 
   // Update local video element
   useEffect(() => {
     if (localVideoRef.current && localVideoStream) {
       localVideoRef.current.srcObject = localVideoStream;
+      // Ensure video plays
+      localVideoRef.current.play().catch(err => {
+        console.log('Local video autoplay blocked:', err);
+      });
     }
   }, [localVideoStream]);
 
@@ -420,23 +464,30 @@ function App() {
           
           {/* Audio button */}
           <button
-            onClick={toggleAudio}
+            onClick={async () => {
+              await globalAudioUnlock();
+              await toggleAudio();
+              setAudioBlocked(false);
+            }}
             className={`xp-button px-2 md:px-3 py-2 text-xs md:text-sm font-bold text-white ${isAudioEnabled ? 'animate-pulse' : ''}`}
             style={{ background: isAudioEnabled ? '#32D657' : currentTheme.gradient }}
             title="Toggle voice chat"
           >
-            {isAudioEnabled ? '🎤' : '🎤'}
+            {isAudioEnabled ? '🎤' : '🔇'}
             <span className="hidden sm:inline ml-1">{isAudioEnabled ? 'ON' : 'OFF'}</span>
           </button>
           
           {/* Video button */}
           <button
-            onClick={toggleVideo}
+            onClick={async () => {
+              await globalAudioUnlock();
+              await toggleVideo();
+            }}
             className={`xp-button px-2 md:px-3 py-2 text-xs md:text-sm font-bold text-white ${isVideoEnabled ? 'animate-pulse' : ''}`}
             style={{ background: isVideoEnabled ? '#FF6A00' : currentTheme.gradient }}
             title="Toggle video"
           >
-            {isVideoEnabled ? '📹' : '📹'}
+            {isVideoEnabled ? '📹' : '📷'}
             <span className="hidden sm:inline ml-1">{isVideoEnabled ? 'ON' : 'OFF'}</span>
           </button>
           
@@ -478,6 +529,37 @@ function App() {
       {avError && (
         <div className="mx-2 md:mx-4 mt-2 p-2 rounded-lg bg-red-500/30 text-red-100 text-xs text-center">
           ⚠️ {avError}
+        </div>
+      )}
+      
+      {/* Audio unblock prompt - show when peers exist but audio might be blocked */}
+      {(isAudioEnabled || isVideoEnabled) && avPeers.size > 0 && audioBlocked && (
+        <div 
+          className="mx-2 md:mx-4 mt-2 p-3 rounded-lg bg-yellow-500/40 text-yellow-100 text-sm text-center cursor-pointer animate-pulse"
+          onClick={async () => {
+            await globalAudioUnlock();
+            setAudioBlocked(false);
+          }}
+        >
+          🔊 <strong>Click here to enable audio!</strong> Browsers block audio until you interact.
+        </div>
+      )}
+
+      {/* Connection status for AV */}
+      {(isAudioEnabled || isVideoEnabled) && (
+        <div className="mx-2 md:mx-4 mt-2 p-2 rounded-lg bg-blue-500/20 text-blue-100 text-xs text-center">
+          {connectionState === 'connected' && avPeers.size === 0 && (
+            <span>📡 Waiting for others to join with audio/video...</span>
+          )}
+          {connectionState === 'connected' && avPeers.size > 0 && (
+            <span>🟢 Connected with {avPeers.size} peer{avPeers.size > 1 ? 's' : ''}</span>
+          )}
+          {connectionState === 'connecting' && (
+            <span>⏳ Connecting to signaling server...</span>
+          )}
+          {connectionState === 'reconnecting' && (
+            <span>🔄 Reconnecting...</span>
+          )}
         </div>
       )}
       
@@ -903,16 +985,21 @@ function RemoteVideo({ stream, username }: { stream: MediaStream; username: stri
       console.log('RemoteVideo: Setting stream', stream.id, 'with', stream.getTracks().length, 'tracks');
       video.srcObject = stream;
       
-      // Ensure video plays
+      // Ensure video plays (start muted, then unmute after play)
       const playVideo = async () => {
         try {
-          video.muted = false;
+          video.muted = true; // Start muted to allow autoplay
           await video.play();
           console.log('RemoteVideo: Playing successfully');
+          // Try to unmute after successful play
+          setTimeout(() => {
+            video.muted = false;
+          }, 100);
         } catch (err) {
           console.log('RemoteVideo: Autoplay blocked, will retry:', err);
           // Retry on user interaction
           const handler = () => {
+            video.muted = false;
             video.play().catch(console.error);
             document.removeEventListener('click', handler);
             document.removeEventListener('touchstart', handler);

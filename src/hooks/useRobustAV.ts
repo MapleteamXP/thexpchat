@@ -1155,6 +1155,9 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
     }
   };
 
+  // Track if audio has been globally unlocked
+  const audioUnlockedRef = useRef(false);
+
   // Unlock audio context - CRITICAL for browsers that block audio
   const unlockAudioContext = async () => {
     try {
@@ -1168,15 +1171,35 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
       
       if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
         await audioContextRef.current.resume();
-        console.log('Audio context resumed successfully');
+        console.log('✅ Audio context resumed successfully');
       }
+      
+      audioUnlockedRef.current = true;
     } catch (err) {
       console.log('Audio context unlock failed:', err);
     }
   };
 
+  // Global audio unlock - call this on ANY user interaction
+  const globalAudioUnlock = async () => {
+    if (audioUnlockedRef.current) return;
+    
+    console.log('🔓 Attempting global audio unlock...');
+    await unlockAudioContext();
+    
+    // Try to unlock all existing audio elements
+    document.querySelectorAll('audio').forEach((audio) => {
+      if (audio.paused || audio.muted) {
+        audio.muted = false;
+        audio.play().catch(() => {});
+      }
+    });
+    
+    audioUnlockedRef.current = true;
+  };
+
   const playAudio = (peerId: string, stream: MediaStream) => {
-    console.log('Setting up audio playback for peer:', peerId);
+    console.log('🔊 Setting up audio playback for peer:', peerId);
     console.log('Stream info:', {
       id: stream.id,
       active: stream.active,
@@ -1199,41 +1222,37 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
     audio.srcObject = stream;
     audio.autoplay = true;
     audio.volume = 1.0;
-    // Start muted and unmute after play - this helps with autoplay policies
-    audio.muted = true;
+    // IMPORTANT: Start unmuted - browsers allow this if user has already interacted
+    audio.muted = false;
     audio.playsInline = true; // Important for iOS
     audio.setAttribute('data-peer-id', peerId);
+    audio.style.position = 'fixed';
+    audio.style.opacity = '0';
+    audio.style.pointerEvents = 'none';
     
     // Add to body first, then play
     document.body.appendChild(audio);
     
-    const tryPlay = async () => {
+    const tryPlay = async (attempt = 1) => {
       try {
         await audio.play();
-        // Unmute after successful play
-        audio.muted = false;
         console.log('✅ Audio playing successfully from:', peerId);
       } catch (err) {
-        console.error('❌ Audio play failed for', peerId, ':', err);
-        // Keep muted and retry on interaction
+        console.warn(`⚠️ Audio play failed (attempt ${attempt}):`, err);
+        
+        if (attempt < 3) {
+          // Retry with slight delay
+          setTimeout(() => tryPlay(attempt + 1), 500);
+        } else {
+          console.log('🔇 Audio blocked by autoplay policy - will retry on user interaction');
+          // Keep the element but muted until user interacts
+          audio.muted = true;
+        }
       }
     };
     
     // Try to play immediately
     tryPlay();
-    
-    // Also set up interaction handler for browsers that block autoplay
-    const interactionHandler = async () => {
-      if (audio.paused || audio.muted) {
-        audio.muted = false;
-        try {
-          await audio.play();
-          console.log('✅ Audio resumed after user interaction for:', peerId);
-        } catch (err) {
-          console.error('❌ Audio still failed after interaction:', err);
-        }
-      }
-    };
     
     // Listen for track events
     stream.getAudioTracks().forEach(track => {
@@ -1245,17 +1264,12 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
       };
       track.onunmute = () => {
         console.log('Audio track unmuted for peer:', peerId);
-        // Try to play again when track becomes active
-        if (audio.paused) {
+        if (audio.paused || audio.muted) {
+          audio.muted = false;
           audio.play().catch(console.error);
         }
       };
     });
-    
-    // Multiple event listeners to catch user interaction
-    document.addEventListener('click', interactionHandler, { once: true });
-    document.addEventListener('touchstart', interactionHandler, { once: true });
-    document.addEventListener('keydown', interactionHandler, { once: true });
   };
 
   const enableAudio = async (targetQuality?: QualityLevel): Promise<boolean> => {
@@ -1341,12 +1355,15 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
       
       await Promise.all(addPromises);
       
-      // Announce presence to new peers
-      broadcastJoin();
+      // Announce presence to new peers (with slight delay to ensure MQTT ready)
+      setTimeout(() => {
+        broadcastJoin();
+        console.log('📢 Broadcasted audio join');
+      }, 500);
       
       return true;
     } catch (err) {
-      console.error('Audio error:', err);
+      console.error('❌ Audio error:', err);
       setError('Microphone access denied');
       setIsAudioEnabled(false);
       return false;
@@ -1431,12 +1448,15 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
       
       await Promise.all(addPromises);
       
-      // Announce presence to new peers
-      broadcastJoin();
+      // Announce presence to new peers (with slight delay to ensure MQTT ready)
+      setTimeout(() => {
+        broadcastJoin();
+        console.log('📢 Broadcasted video join');
+      }, 500);
       
       return true;
     } catch (err) {
-      console.error('Video error:', err);
+      console.error('❌ Video error:', err);
       setError('Camera access denied');
       setIsVideoEnabled(false);
       return false;
@@ -1647,5 +1667,6 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
     toggleVideo,
     setQuality,
     getDiagnostics,
+    globalAudioUnlock,
   };
 }
