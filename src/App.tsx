@@ -88,9 +88,43 @@ function App() {
     globalAudioUnlock,
   } = useRobustAV(roomCode, username, currentView === 'chat');
 
+  // Log AV errors
+  useEffect(() => {
+    if (avError) {
+      addErrorLog(`AV Error: ${avError}`);
+    }
+  }, [avError]);
+
+  // Log connection state changes
+  useEffect(() => {
+    addErrorLog(`Connection state: ${connectionState}`);
+  }, [connectionState]);
+
   // Track if user has interacted (required for audio)
   const [hasUserInteracted, setHasUserInteracted] = useState(false);
   const [audioBlocked, setAudioBlocked] = useState(false);
+
+  // Error log state
+  const [errorLogs, setErrorLogs] = useState<string[]>([]);
+  const [showErrorLog, setShowErrorLog] = useState(false);
+  
+  // Function to add error to log
+  const addErrorLog = (message: string) => {
+    const timestamp = new Date().toLocaleTimeString();
+    setErrorLogs(prev => [...prev.slice(-49), `[${timestamp}] ${message}`]);
+  };
+  
+  // Capture console errors
+  useEffect(() => {
+    const originalError = console.error;
+    console.error = (...args: any[]) => {
+      originalError.apply(console, args);
+      addErrorLog(args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+    };
+    return () => {
+      console.error = originalError;
+    };
+  }, []);
 
   // Global audio unlock on first user interaction
   useEffect(() => {
@@ -229,7 +263,10 @@ function App() {
 
   const handleThemeSelect = (theme: Theme) => {
     setCurrentTheme(theme);
-    setCurrentView('room');
+    // If already in chat, stay in chat, otherwise go to room selection
+    if (currentView !== 'chat') {
+      setCurrentView('room');
+    }
   };
 
   const handleJoinRoom = () => {
@@ -522,6 +559,18 @@ function App() {
           >
             🔧
           </button>
+
+          {/* Reconnect button - shown when disconnected */}
+          {(isAudioEnabled || isVideoEnabled) && connectionState !== 'connected' && (
+            <button
+              onClick={() => window.location.reload()}
+              className="xp-button px-2 md:px-3 py-2 text-xs md:text-sm font-bold text-white animate-pulse"
+              style={{ background: '#ff4444' }}
+              title="Reload page to reconnect"
+            >
+              🔄 Reconnect
+            </button>
+          )}
         </div>
       </div>
       
@@ -549,16 +598,26 @@ function App() {
       {(isAudioEnabled || isVideoEnabled) && (
         <div className="mx-2 md:mx-4 mt-2 p-2 rounded-lg bg-blue-500/20 text-blue-100 text-xs text-center">
           {connectionState === 'connected' && avPeers.size === 0 && (
-            <span>📡 Waiting for others to join with audio/video...</span>
+            <span className="animate-pulse">📡 Waiting for others to enable audio/video...</span>
           )}
           {connectionState === 'connected' && avPeers.size > 0 && (
-            <span>🟢 Connected with {avPeers.size} peer{avPeers.size > 1 ? 's' : ''}</span>
+            <div className="flex flex-col gap-1">
+              <span>🟢 Connected with {avPeers.size} peer{avPeers.size > 1 ? 's' : ''}</span>
+              <span className="text-[10px] opacity-70">
+                {Array.from(avPeers.values()).map(p => 
+                  `${p.username}${p.connected ? '✓' : '⟳'}`
+                ).join(', ')}
+              </span>
+            </div>
           )}
           {connectionState === 'connecting' && (
-            <span>⏳ Connecting to signaling server...</span>
+            <span className="animate-pulse">⏳ Connecting to signaling server...</span>
           )}
           {connectionState === 'reconnecting' && (
-            <span>🔄 Reconnecting...</span>
+            <span className="animate-pulse">🔄 Reconnecting... Please wait</span>
+          )}
+          {connectionState === 'failed' && (
+            <span className="text-red-300">❌ Connection failed. Try refreshing the page.</span>
           )}
         </div>
       )}
@@ -968,6 +1027,64 @@ function App() {
         {currentView === 'room' && renderRoom()}
         {currentView === 'chat' && renderChat()}
       </div>
+      
+      {/* Error Log Button - Bottom Left Corner */}
+      <button
+        onClick={() => setShowErrorLog(!showErrorLog)}
+        className="fixed bottom-2 left-2 z-50 px-2 py-1 rounded text-[10px] opacity-30 hover:opacity-100 transition-opacity"
+        style={{ 
+          background: 'rgba(0,0,0,0.5)', 
+          color: '#fff',
+          border: '1px solid rgba(255,255,255,0.2)'
+        }}
+        title="Error Log"
+      >
+        📝 {errorLogs.length > 0 && `(${errorLogs.length})`}
+      </button>
+      
+      {/* Error Log Modal */}
+      {showErrorLog && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => setShowErrorLog(false)}
+        >
+          <div 
+            className="xp-panel w-full max-w-2xl max-h-[80vh] flex flex-col"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-3 border-b" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
+              <h3 className="text-sm font-bold" style={{ color: currentTheme.textColor }}>Error Log</h3>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setErrorLogs([])}
+                  className="text-xs px-2 py-1 rounded hover:bg-white/10"
+                  style={{ color: currentTheme.textColor }}
+                >
+                  Clear
+                </button>
+                <button
+                  onClick={() => setShowErrorLog(false)}
+                  className="text-xs px-2 py-1 rounded hover:bg-white/10"
+                  style={{ color: currentTheme.textColor }}
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-3 space-y-1 font-mono text-xs">
+              {errorLogs.length === 0 ? (
+                <span className="opacity-50" style={{ color: currentTheme.textColor }}>No errors logged yet...</span>
+              ) : (
+                errorLogs.map((log, i) => (
+                  <div key={i} className="break-all" style={{ color: currentTheme.textColor }}>
+                    {log}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

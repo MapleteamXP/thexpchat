@@ -24,43 +24,41 @@ interface LocalStreams {
 type QualityLevel = 'high' | 'medium' | 'low' | 'audio-only';
 type ConnectionState = 'connected' | 'connecting' | 'disconnected' | 'reconnecting' | 'failed';
 
-// Enhanced RTC config with more TURN servers for better international connectivity
-// Including servers optimized for US-Mexico connections
+// Enhanced RTC config - OPTIMIZED for fast connection
+// Using trickle ICE for faster establishment
 const RTC_CONFIG: RTCConfiguration = {
   iceServers: [
     // Google's public STUN servers
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun3.l.google.com:19302' },
-    { urls: 'stun:stun4.l.google.com:19302' },
-    // Twilio's public TURN servers (more reliable for international)
+    // Open Relay - FAST and reliable
     {
-      urls: 'turn:global.turn.twilio.com:3478?transport=udp',
-      username: 'f4b4035eaa76b7a9f187e111a2615b4392f14d4c82c7eb60e47d9a46d95a8519',
-      credential: 'WKg7oO/acUNOXqhkC4gkU9Gl1Z6K3w3/S6NhvCyShvI=',
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
     },
-    {
-      urls: 'turn:global.turn.twilio.com:443?transport=tcp',
-      username: 'f4b4035eaa76b7a9f187e111a2615b4392f14d4c82c7eb60e47d9a46d95a8519',
-      credential: 'WKg7oO/acUNOXqhkC4gkU9Gl1Z6K3w3/S6NhvCyShvI=',
-    },
-    // Open Relay (backup)
     {
       urls: 'turn:openrelay.metered.ca:443',
       username: 'openrelayproject',
       credential: 'openrelayproject',
     },
-    // Cloudflare TURN (experimental but works well)
     {
-      urls: 'turn:turn.cloudflare.com:3478',
+      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
       username: 'openrelayproject',
       credential: 'openrelayproject',
+    },
+    // Twilio's TURN servers (backup)
+    {
+      urls: 'turn:global.turn.twilio.com:3478?transport=udp',
+      username: 'f4b4035eaa76b7a9f187e111a2615b4392f14d4c82c7eb60e47d9a46d95a8519',
+      credential: 'WKg7oO/acUNOXqhkC4gkU9Gl1Z6K3w3/S6NhvCyShvI=',
     },
   ],
   bundlePolicy: 'max-bundle' as RTCBundlePolicy,
   rtcpMuxPolicy: 'require' as RTCRtcpMuxPolicy,
   iceTransportPolicy: 'all',
+  iceCandidatePoolSize: 10, // Pre-gather candidates for faster connections
 };
 
 // Adaptive audio constraints
@@ -155,6 +153,7 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
   // Auto-reconnect refs
   const mqttReconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const connectionRecoveryIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const connectionRefreshIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isReconnectingRef = useRef<boolean>(false);
   const wasConnectedRef = useRef<boolean>(false);
   const pendingReconnectPeersRef = useRef<Set<string>>(new Set());
@@ -451,12 +450,12 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
       if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
       pingIntervalRef.current = setInterval(() => {
         broadcastPing();
-      }, 5000);
+      }, 3000); // More frequent pings (every 3 seconds)
       
       if (healthCheckIntervalRef.current) clearInterval(healthCheckIntervalRef.current);
       healthCheckIntervalRef.current = setInterval(() => {
         checkConnectionHealth();
-      }, 8000);
+      }, 5000); // Check health every 5 seconds
 
       if (qualityMonitorRef.current) clearInterval(qualityMonitorRef.current);
       qualityMonitorRef.current = setInterval(() => {
@@ -471,7 +470,17 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
       if (connectionRecoveryIntervalRef.current) clearInterval(connectionRecoveryIntervalRef.current);
       connectionRecoveryIntervalRef.current = setInterval(() => {
         performConnectionRecovery();
-      }, 10000);
+      }, 5000); // Check every 5 seconds for faster recovery
+
+      // Connection refresh interval - keeps connections alive every 30 seconds
+      if (connectionRefreshIntervalRef.current) clearInterval(connectionRefreshIntervalRef.current);
+      connectionRefreshIntervalRef.current = setInterval(() => {
+        peersRef.current.forEach((peer, peerId) => {
+          if (peer.connected) {
+            sendConnectionRefresh(peerId);
+          }
+        });
+      }, 30000);
     });
 
     client.on('disconnect', () => {
@@ -525,13 +534,13 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
       return;
     }
 
-    // Check heartbeat
-    if (timeSinceLastPing > 20000) {
+    // Check heartbeat - SHORTER timeout (12 seconds)
+    if (timeSinceLastPing > 12000) {
       heartbeatMissedCountRef.current++;
-      console.log('Heartbeat missed:', heartbeatMissedCountRef.current);
+      console.log('💓 Heartbeat missed:', heartbeatMissedCountRef.current);
       
-      if (heartbeatMissedCountRef.current > 3) {
-        console.log('Too many missed heartbeats - forcing reconnect');
+      if (heartbeatMissedCountRef.current > 2) {
+        console.log('❌ Too many missed heartbeats - forcing reconnect');
         if (!isReconnectingRef.current) {
           attemptMqttReconnect();
         }
@@ -585,6 +594,33 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
         hasVideo: !!localStreamsRef.current.video,
       })
     );
+  };
+
+  // Send connection refresh to keep ICE alive
+  const sendConnectionRefresh = (peerId: string) => {
+    const peer = peersRef.current.get(peerId);
+    if (!peer || !clientRef.current?.connected) return;
+    
+    // Send a new offer to refresh the connection
+    if (peer.connection.connectionState === 'connected') {
+      peer.connection.createOffer({ iceRestart: true })
+        .then(offer => peer.connection.setLocalDescription(offer))
+        .then(() => {
+          clientRef.current?.publish(
+            `xpav/${roomCode}/offer`,
+            JSON.stringify({
+              type: 'av-offer',
+              from: myIdRef.current,
+              to: peerId,
+              offer: peer.connection.localDescription,
+              username: localUsername,
+              quality: currentQualityRef.current,
+            })
+          );
+          console.log('🔄 Sent connection refresh to:', peerId);
+        })
+        .catch(err => console.error('Connection refresh failed:', err));
+    }
   };
 
   const broadcastLeave = () => {
@@ -648,7 +684,8 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
     let needsUpdate = false;
     
     peersRef.current.forEach((peer, peerId) => {
-      const timeout = peer.connected ? 45000 : 30000;
+      // SHORTER timeouts for faster detection of issues
+      const timeout = peer.connected ? 20000 : 15000; // 20s for connected, 15s for connecting
       
       if (now - peer.lastPing > timeout) {
         console.log('Peer stale, marking disconnected:', peerId);
@@ -801,10 +838,11 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
         pc.addTransceiver('video', { direction: 'recvonly' });
       }
 
+      // TRICKLE ICE: Send offer immediately, candidates separately
       pc.onnegotiationneeded = async () => {
         try {
           if (makingOfferRef.current.has(peerId)) return;
-          await new Promise(r => setTimeout(r, Math.random() * 200));
+          await new Promise(r => setTimeout(r, Math.random() * 100));
           if (makingOfferRef.current.has(peerId)) return;
           
           makingOfferRef.current.add(peerId);
@@ -816,21 +854,23 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
           }
           
           await pc.setLocalDescription(offer);
-          await waitForIceGathering(pc, 4000);
           
-          const finalOffer = pc.localDescription;
-          if (finalOffer && clientRef.current?.connected) {
+          // TRICKLE ICE: Send offer immediately without waiting for ICE gathering
+          // Candidates will be sent via onicecandidate as they arrive
+          const offerToSend = pc.localDescription;
+          if (offerToSend && clientRef.current?.connected) {
             clientRef.current.publish(
               `xpav/${roomCode}/offer`,
               JSON.stringify({
                 type: 'av-offer',
                 from: myIdRef.current,
                 to: peerId,
-                offer: finalOffer,
+                offer: offerToSend,
                 username: localUsername,
                 quality: currentQualityRef.current,
               })
             );
+            console.log('📤 Sent offer (trickle ICE) to:', peerId);
           }
         } catch (err) {
           console.error('Renegotiation error:', err);
@@ -839,8 +879,10 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
         }
       };
 
+      // TRICKLE ICE: Send candidates immediately as they arrive
       pc.onicecandidate = (event) => {
         if (event.candidate && clientRef.current?.connected) {
+          console.log('📤 Sending ICE candidate to:', peerId, event.candidate.type);
           clientRef.current.publish(
             `xpav/${roomCode}/ice`,
             JSON.stringify({
@@ -850,6 +892,8 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
               candidate: event.candidate,
             })
           );
+        } else if (!event.candidate) {
+          console.log('✅ ICE gathering complete for:', peerId);
         }
       };
 
@@ -918,12 +962,21 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
         stableConnectionRef.current.set(peerId, true);
       };
 
+      // Connection timeout - force reconnect if not connected within 15 seconds
+      const connectionTimeout = setTimeout(() => {
+        if (pc.connectionState !== 'connected' && pc.connectionState !== 'connecting') {
+          console.log('⏱️ Connection timeout for:', peerId, '- forcing reconnect');
+          reconnectPeer(peerId);
+        }
+      }, 15000);
+
       pc.onconnectionstatechange = () => {
         console.log('Connection state for', peerId, ':', pc.connectionState);
         const peer = peersRef.current.get(peerId);
         
         if (peer) {
           if (pc.connectionState === 'connected') {
+            clearTimeout(connectionTimeout);
             peer.connected = true;
             peer.lastPing = Date.now();
             reconnectAttemptsRef.current.set(peerId, 0);
@@ -934,12 +987,16 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
               monitorConnectionQuality(peerId);
             }, 10000);
             
+            console.log('✅ Peer connected:', peerId);
+            
           } else if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+            clearTimeout(connectionTimeout);
             peer.connected = false;
             if (peer.statsInterval) clearInterval(peer.statsInterval);
             
+            console.log('❌ Peer connection failed/closed:', peerId);
             if (pc.connectionState === 'failed') {
-              setTimeout(() => reconnectPeer(peerId), 1000);
+              setTimeout(() => reconnectPeer(peerId), 500);
             }
           }
           
@@ -964,26 +1021,25 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
       if (isInitiator) {
         try {
           makingOfferRef.current.add(peerId);
-          // Modern way: ensure we have transceivers for receiving
+          // TRICKLE ICE: Create and send offer immediately
           const offer = await pc.createOffer();
           await pc.setLocalDescription(offer);
           
-          await waitForIceGathering(pc, 5000);
-          
-          const finalOffer = pc.localDescription;
-          if (finalOffer && clientRef.current?.connected) {
+          // Send offer immediately - don't wait for ICE gathering
+          const offerToSend = pc.localDescription;
+          if (offerToSend && clientRef.current?.connected) {
             clientRef.current.publish(
               `xpav/${roomCode}/offer`,
               JSON.stringify({
                 type: 'av-offer',
                 from: myIdRef.current,
                 to: peerId,
-                offer: finalOffer,
+                offer: offerToSend,
                 username: localUsername,
                 quality: currentQualityRef.current,
               })
             );
-            console.log('Sent offer to:', peerId);
+            console.log('📤 Sent initial offer (trickle ICE) to:', peerId);
           }
         } catch (err) {
           console.error('Offer error:', err);
@@ -1084,26 +1140,25 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
         peer.iceBuffer = [];
       }
       
-      // Create answer - this will include our transceivers
+      // TRICKLE ICE: Create and send answer immediately
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       console.log('Created and set local answer for:', from);
       
-      await waitForIceGathering(pc, 5000);
-      
-      const finalAnswer = pc.localDescription;
-      if (finalAnswer && clientRef.current?.connected) {
+      // Send answer immediately - don't wait for ICE gathering
+      const answerToSend = pc.localDescription;
+      if (answerToSend && clientRef.current?.connected) {
         clientRef.current.publish(
           `xpav/${roomCode}/answer`,
           JSON.stringify({
             type: 'av-answer',
             from: myIdRef.current,
             to: from,
-            answer: finalAnswer,
+            answer: answerToSend,
             quality: currentQualityRef.current,
           })
         );
-        console.log('Sent answer to:', from);
+        console.log('📤 Sent answer (trickle ICE) to:', from);
       }
     } catch (err) {
       console.error('Answer error:', err);
@@ -1637,6 +1692,7 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
     if (qualityChangeTimeoutRef.current) clearTimeout(qualityChangeTimeoutRef.current);
     if (mqttReconnectTimeoutRef.current) clearTimeout(mqttReconnectTimeoutRef.current);
     if (connectionRecoveryIntervalRef.current) clearInterval(connectionRecoveryIntervalRef.current);
+    if (connectionRefreshIntervalRef.current) clearInterval(connectionRefreshIntervalRef.current);
     
     disableAudio();
     disableVideo();
