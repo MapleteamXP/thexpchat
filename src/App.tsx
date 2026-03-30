@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
 import { themes, type Theme } from './data/themes';
 import { emojiCategories } from './data/emojis';
@@ -40,7 +40,7 @@ function App() {
   const [roomCode, setRoomCode] = useState<string>('');
   const [tempRoomCode, setTempRoomCode] = useState<string>('');
   const [currentView, setCurrentView] = useState<'welcome' | 'theme' | 'room' | 'chat'>('welcome');
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+
   const [selectedEmojiCategory, setSelectedEmojiCategory] = useState('Smileys');
   const [newMessage, setNewMessage] = useState('');
   const [showYoutube, setShowYoutube] = useState(false);
@@ -51,6 +51,8 @@ function App() {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [isSearchingYoutube, setIsSearchingYoutube] = useState(false);
   const [showQualitySelector, setShowQualitySelector] = useState(false);
+  const [emojiPickerPos, setEmojiPickerPos] = useState<{ top: number; left: number } | null>(null);
+  const emojiButtonRef = useRef<HTMLButtonElement>(null);
   
   // Chat scroll state - manual scroll control
   const [isScrolledToBottom, setIsScrolledToBottom] = useState(true);
@@ -146,17 +148,33 @@ function App() {
     }
   };
 
-  // Close quality selector when clicking outside
+  // Close quality selector and emoji picker when clicking outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
       if (!target.closest('.quality-selector-container')) {
         setShowQualitySelector(false);
       }
+      if (!target.closest('.emoji-picker-container') && !target.closest('.emoji-button')) {
+        setEmojiPickerPos(null);
+      }
     };
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
   }, []);
+
+  // Position emoji picker near the emoji button
+  const toggleEmojiPicker = () => {
+    if (emojiPickerPos) {
+      setEmojiPickerPos(null);
+    } else if (emojiButtonRef.current) {
+      const rect = emojiButtonRef.current.getBoundingClientRect();
+      setEmojiPickerPos({
+        top: rect.top - 320, // Position above the button
+        left: Math.min(rect.left, window.innerWidth - 340), // Keep within viewport
+      });
+    }
+  };
 
   const handleUsernameSubmit = () => {
     if (tempUsername.trim()) {
@@ -180,7 +198,7 @@ function App() {
     if (!newMessage.trim() || !isReady) return;
     sendChatMessage(newMessage.trim());
     setNewMessage('');
-    setShowEmojiPicker(false);
+    closeEmojiPicker();
     // Scroll to bottom when sending own message
     setTimeout(scrollToBottom, 100);
   };
@@ -188,6 +206,10 @@ function App() {
   const addEmoji = (emoji: string) => {
     setNewMessage(prev => prev + emoji);
     messageInputRef.current?.focus();
+  };
+
+  const closeEmojiPicker = () => {
+    setEmojiPickerPos(null);
   };
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -660,8 +682,9 @@ function App() {
           <div className="border-t p-2 md:p-3 shrink-0" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
             <div className="flex gap-1 md:gap-2 items-center">
               <button
-                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                className="p-2 rounded-full hover:bg-white/10 text-lg md:text-xl transition-colors"
+                ref={emojiButtonRef}
+                onClick={toggleEmojiPicker}
+                className="emoji-button p-2 rounded-full hover:bg-white/10 text-lg md:text-xl transition-colors"
               >
                 😀
               </button>
@@ -704,34 +727,62 @@ function App() {
               </button>
             </div>
             
-            {/* Emoji picker */}
-            {showEmojiPicker && (
-              <div className="mt-2 xp-panel p-2 md:p-3 max-h-40 md:max-h-48 overflow-y-auto absolute bottom-full left-0 right-0 mx-2">
-                <div className="flex gap-1 mb-2 overflow-x-auto pb-1">
-                  {emojiCategories.map((cat) => (
-                    <button
-                      key={cat.name}
-                      onClick={() => setSelectedEmojiCategory(cat.name)}
-                      className={`px-2 py-1 rounded-full text-xs whitespace-nowrap ${selectedEmojiCategory === cat.name ? 'text-white' : 'bg-black/10'}`}
-                      style={selectedEmojiCategory === cat.name ? { background: currentTheme.gradient } : {}}
+          </div>
+
+          {/* Emoji picker - Floating overlay positioned near the emoji button */}
+          {emojiPickerPos && (
+            <div 
+              className="emoji-picker-container fixed z-50 xp-panel p-3 md:p-4 shadow-2xl"
+              style={{ 
+                top: `${emojiPickerPos.top}px`, 
+                left: `${emojiPickerPos.left}px`,
+                width: '320px',
+                maxHeight: '300px',
+              }}
+            >
+              {/* Close button */}
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold" style={{ color: currentTheme.textColor }}>Emojis</span>
+                <button 
+                  onClick={closeEmojiPicker}
+                  className="text-xs px-2 py-1 rounded-full hover:bg-white/10"
+                  style={{ color: currentTheme.textColor }}
+                >
+                  ✕ Close
+                </button>
+              </div>
+              
+              {/* Category tabs */}
+              <div className="flex gap-1 mb-2 overflow-x-auto pb-1 scrollbar-thin">
+                {emojiCategories.map((cat) => (
+                  <button
+                    key={cat.name}
+                    onClick={() => setSelectedEmojiCategory(cat.name)}
+                    className={`px-2 py-1 rounded-full text-xs whitespace-nowrap transition-all ${selectedEmojiCategory === cat.name ? 'text-white shadow-md' : 'bg-black/10 hover:bg-black/20'}`}
+                    style={selectedEmojiCategory === cat.name ? { background: currentTheme.gradient } : {}}
+                    title={cat.name}
+                  >
+                    {cat.icon}
+                  </button>
+                ))}
+              </div>
+              
+              {/* Emoji grid */}
+              <div className="grid grid-cols-8 gap-1 max-h-[180px] overflow-y-auto p-1">
+                {emojiCategories
+                  .find(cat => cat.name === selectedEmojiCategory)
+                  ?.emojis.map((emoji, i) => (
+                    <button 
+                      key={i} 
+                      onClick={() => addEmoji(emoji)} 
+                      className="text-lg md:text-xl p-1.5 hover:bg-white/20 rounded-lg text-center transition-transform hover:scale-125"
                     >
-                      {cat.icon}
+                      {emoji}
                     </button>
                   ))}
-                </div>
-                <div className="grid grid-cols-8 gap-1">
-                  {emojiCategories
-                    .find(cat => cat.name === selectedEmojiCategory)
-                    ?.emojis.slice(0, 32)
-                    .map((emoji, i) => (
-                      <button key={i} onClick={() => addEmoji(emoji)} className="text-lg md:text-xl p-1 hover:bg-white/10 rounded text-center">
-                        {emoji}
-                      </button>
-                    ))}
-                </div>
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
         
         {/* RIGHT PANEL: YouTube panel */}
