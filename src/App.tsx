@@ -6,63 +6,96 @@ import { useStableChat } from './hooks/useStableChat';
 import { useRobustAV } from './hooks/useRobustAV';
 import { searchYoutube } from './lib/youtube';
 
-// Theme-aware Logo - Gamer Style
+// Theme-aware Logo - Ultimate Gamer Style
 const XPChatLogo = ({ theme, size = 'normal' }: { theme: Theme; size?: 'small' | 'normal' | 'large' }) => {
   const sizeClasses = {
-    small: { text: 'text-lg', icon: 'text-base' },
-    normal: { text: 'text-2xl', icon: 'text-xl' },
-    large: { text: 'text-4xl md:text-5xl', icon: 'text-3xl md:text-4xl' }
+    small: { text: 'text-lg', icon: 'text-sm', badge: 'text-[8px]' },
+    normal: { text: 'text-2xl', icon: 'text-lg', badge: 'text-[10px]' },
+    large: { text: 'text-4xl md:text-5xl', icon: 'text-2xl md:text-3xl', badge: 'text-xs' }
   };
   
   return (
-    <div className={`font-display ${sizeClasses[size].text} flex items-center gap-1.5 select-none`}>
-      {/* Gaming Controller Icon */}
+    <div className={`font-display ${sizeClasses[size].text} flex items-center gap-1 select-none group cursor-pointer`}>
+      {/* Glowing Badge */}
+      <div className="relative">
+        <span 
+          className={`${sizeClasses[size].icon} font-black px-1.5 py-0.5 rounded skew-x-[-10deg]`}
+          style={{ 
+            background: theme.gradient,
+            boxShadow: '0 0 15px rgba(255,255,255,0.4), 0 4px 8px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3)',
+            textShadow: '0 1px 2px rgba(0,0,0,0.5)',
+            border: '1px solid rgba(255,255,255,0.2)'
+          }}
+        >
+          <span className="block skew-x-[10deg] text-white">XP</span>
+        </span>
+        {/* Pulse glow effect */}
+        <div 
+          className="absolute inset-0 rounded animate-ping opacity-30"
+          style={{ background: theme.gradient }}
+        />
+      </div>
+      
+      {/* Crosshair Divider */}
       <span 
-        className="relative"
-        style={{ 
-          filter: 'drop-shadow(0 0 8px rgba(255,255,255,0.4)) drop-shadow(0 2px 4px rgba(0,0,0,0.5))'
-        }}
+        className="relative mx-0.5 opacity-80"
+        style={{ color: theme.accent }}
       >
-        <span className={sizeClasses[size].icon}>🎮</span>
+        <span className="absolute inset-0 animate-spin" style={{ animationDuration: '4s' }}>✦</span>
+        <span className="relative">✦</span>
       </span>
       
-      {/* XP Text - Bold Gaming Style */}
-      <span 
-        className="font-black tracking-tighter"
-        style={{ 
-          background: theme.gradient,
-          WebkitBackgroundClip: 'text',
-          WebkitTextFillColor: 'transparent',
-          filter: 'drop-shadow(0 0 12px rgba(255,255,255,0.3)) drop-shadow(0 3px 6px rgba(0,0,0,0.4))',
-          textShadow: '0 0 20px rgba(255,255,255,0.2)',
-          fontStyle: 'italic'
-        }}
-      >
-        XP
-      </span>
+      {/* CHAT Text with glitch effect */}
+      <div className="relative">
+        <span 
+          className="font-black tracking-wider"
+          style={{ 
+            color: theme.textColor,
+            textShadow: `
+              -1px -1px 0 ${theme.accent},
+              1px 1px 0 rgba(0,0,0,0.5),
+              0 0 10px ${theme.accent}80
+            `,
+            fontStyle: 'italic'
+          }}
+        >
+          CHAT
+        </span>
+        {/* RGB Glitch layers */}
+        <span 
+          className="absolute top-0 left-0 font-black tracking-wider italic opacity-50"
+          style={{ 
+            color: '#ff0080',
+            clipPath: 'polygon(0 0, 100% 0, 100% 45%, 0 45%)',
+            transform: 'translate(-1px, 0)',
+            animation: 'glitch 2s infinite'
+          }}
+        >
+          CHAT
+        </span>
+        <span 
+          className="absolute top-0 left-0 font-black tracking-wider italic opacity-50"
+          style={{ 
+            color: '#00ffff',
+            clipPath: 'polygon(0 55%, 100% 55%, 100% 100%, 0 100%)',
+            transform: 'translate(1px, 0)',
+            animation: 'glitch 2s infinite 0.1s'
+          }}
+        >
+          CHAT
+        </span>
+      </div>
       
-      {/* Lightning Separator */}
+      {/* Beta tag */}
       <span 
-        className="font-black"
+        className={`${sizeClasses[size].badge} px-1 py-0 rounded font-bold ml-0.5`}
         style={{ 
-          color: theme.accent,
-          filter: 'drop-shadow(0 0 6px rgba(255,255,255,0.5))',
-          fontStyle: 'italic'
+          background: 'linear-gradient(135deg, #ff0066, #ff6600)',
+          color: 'white',
+          boxShadow: '0 2px 4px rgba(0,0,0,0.3)'
         }}
       >
-        ⚡
-      </span>
-      
-      {/* CHAT Text */}
-      <span 
-        className="font-black tracking-tight"
-        style={{ 
-          color: theme.textColor,
-          filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.4))',
-          fontStyle: 'italic'
-        }}
-      >
-        CHAT
+        PRO
       </span>
     </div>
   );
@@ -559,23 +592,80 @@ function App() {
     setEmojiPickerPos(null);
   };
 
-  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // File upload handler - supports images and files up to 30MB
+  const MAX_FILE_SIZE = 30 * 1024 * 1024; // 30MB
+  
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     
+    // Check file size
+    if (file.size > MAX_FILE_SIZE) {
+      alert(`File too large! Maximum size is 30MB. Your file: ${(file.size / 1024 / 1024).toFixed(1)}MB`);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+    
+    const isImage = file.type.startsWith('image/');
+    const isAudio = file.type.startsWith('audio/');
+    const isVideo = file.type.startsWith('video/');
+    
     const reader = new FileReader();
     reader.onload = (event) => {
-      const imageData = event.target?.result as string;
-      if (imageData) {
-        sendImage(imageData, 'Shared an image');
-        setTimeout(scrollToBottom, 100);
+      const fileData = event.target?.result as string;
+      if (!fileData) return;
+      
+      if (isImage) {
+        // Send as image
+        sendImage(fileData, `📷 ${file.name}`);
+      } else {
+        // Send as file message with metadata
+        const fileType = isAudio ? '🎵 Audio' : isVideo ? '🎬 Video' : '📎 File';
+        const fileMsg = {
+          type: 'file' as const,
+          name: file.name,
+          size: file.size,
+          mimeType: file.type,
+          data: fileData
+        };
+        sendFileMessage(fileMsg);
       }
+      setTimeout(scrollToBottom, 100);
     };
+    
+    reader.onerror = () => {
+      alert('Failed to read file. Please try again.');
+    };
+    
     reader.readAsDataURL(file);
     
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
+  };
+  
+  // Send file message via chat
+  const sendFileMessage = (fileData: { type: 'file'; name: string; size: number; mimeType: string; data: string }) => {
+    // For now, send as a special chat message with file info
+    const sizeText = fileData.size < 1024 * 1024 
+      ? `${(fileData.size / 1024).toFixed(1)} KB`
+      : `${(fileData.size / 1024 / 1024).toFixed(1)} MB`;
+    
+    const isAudio = fileData.mimeType.startsWith('audio/');
+    const isVideo = fileData.mimeType.startsWith('video/');
+    
+    let messageText = '';
+    if (isAudio) {
+      messageText = `🎵 Audio: ${fileData.name} (${sizeText})`;
+    } else if (isVideo) {
+      messageText = `🎬 Video: ${fileData.name} (${sizeText})`;
+    } else {
+      const ext = fileData.name.split('.').pop()?.toUpperCase() || 'FILE';
+      messageText = `📎 ${ext}: ${fileData.name} (${sizeText})`;
+    }
+    
+    // Send as image for now (base64 data) - the hook will need updating for full file support
+    sendImage(fileData.data, messageText);
   };
 
   const handleSearchYoutube = async () => {
@@ -1047,8 +1137,8 @@ function App() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*"
-                onChange={handleImageSelect}
+                accept="image/*,audio/*,video/*,.pdf,.doc,.docx,.txt,.zip,.rar,.7z,.exe,.apk,.ipa"
+                onChange={handleFileSelect}
                 className="hidden"
               />
               
