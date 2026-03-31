@@ -39,7 +39,8 @@ function App() {
   const [tempUsername, setTempUsername] = useState<string>('');
   const [roomCode, setRoomCode] = useState<string>('');
   const [tempRoomCode, setTempRoomCode] = useState<string>('');
-  const [currentView, setCurrentView] = useState<'welcome' | 'theme' | 'room' | 'chat'>('welcome');
+  const [currentView, setCurrentView] = useState<'welcome' | 'room' | 'chat'>('welcome');
+  const [showThemeModal, setShowThemeModal] = useState(false);
 
   const [selectedEmojiCategory, setSelectedEmojiCategory] = useState('Smileys');
   const [newMessage, setNewMessage] = useState('');
@@ -480,7 +481,7 @@ function App() {
   const handleUsernameSubmit = () => {
     if (tempUsername.trim()) {
       setUsername(tempUsername.trim());
-      setCurrentView('theme');
+      setShowThemeModal(true);
     }
   };
 
@@ -491,11 +492,13 @@ function App() {
       console.log(`Switching theme from ${currentTheme.name} to ${theme.name}`);
       setCurrentTheme(theme);
     }
-    // If already in chat, stay in chat, otherwise go to room selection
+    // Close theme modal
+    setShowThemeModal(false);
+    // If not in chat, go to room selection
     if (currentView !== 'chat') {
       setCurrentView('room');
     }
-  }, [currentTheme.id, currentView]);
+  }, [currentTheme.id, currentView, setShowThemeModal]);
 
   const handleJoinRoom = () => {
     const code = tempRoomCode.trim() || `room-${Math.random().toString(36).substr(2, 6)}`;
@@ -603,33 +606,6 @@ function App() {
     </div>
   );
 
-  const renderThemePicker = () => (
-    <div className="min-h-screen flex flex-col items-center justify-center p-4">
-      <XPChatLogo theme={currentTheme} size="normal" />
-      <h1 className="font-display text-2xl md:text-3xl mt-4 mb-2 text-center" style={{ color: currentTheme.textColor }}>
-        Choose Your Flavor
-      </h1>
-      <p className="mb-4 text-sm opacity-70" style={{ color: currentTheme.textColor }}>45 candy themes</p>
-      
-      <div className="xp-panel w-full max-w-4xl p-4 max-h-[50vh] overflow-y-auto">
-        <div className="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-10 gap-2 md:gap-3">
-          {themes.map((theme) => (
-            <button
-              key={theme.id}
-              onClick={() => handleThemeSelect(theme)}
-              className={`theme-swatch ${currentTheme.id === theme.id ? 'active' : ''}`}
-              style={{ background: theme.gradient }}
-              title={theme.name}
-            />
-          ))}
-        </div>
-        <p className="text-center mt-4 font-retro text-xs" style={{ color: currentTheme.textColor }}>
-          Selected: {currentTheme.name}
-        </p>
-      </div>
-    </div>
-  );
-
   const renderRoom = () => (
     <div className="min-h-screen flex flex-col items-center justify-center p-4">
       <XPChatLogo theme={currentTheme} size="normal" />
@@ -692,7 +668,7 @@ function App() {
           </div>
         </div>
         
-        <div className="flex items-center gap-1 md:gap-2 mr-1 md:mr-3">
+        <div className="flex items-center gap-1 md:gap-2 mr-2 md:mr-6">
           {/* Quality selector - only show when AV is active */}
           {(isAudioEnabled || isVideoEnabled) && (
             <div className="relative quality-selector-container">
@@ -767,7 +743,7 @@ function App() {
           
           {/* Theme button */}
           <button
-            onClick={() => setCurrentView('theme')}
+            onClick={() => setShowThemeModal(true)}
             className="xp-button px-2.5 md:px-3.5 py-2.5 text-sm md:text-base font-bold text-white hidden sm:block"
             style={{ background: currentTheme.gradient }}
           >
@@ -1248,9 +1224,42 @@ function App() {
       <div className="grain-overlay"></div>
       <div className="relative z-10">
         {currentView === 'welcome' && renderWelcome()}
-        {currentView === 'theme' && renderThemePicker()}
         {currentView === 'room' && renderRoom()}
         {currentView === 'chat' && renderChat()}
+        
+        {/* Theme Modal - can be opened from chat */}
+        {showThemeModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+            <div className="xp-panel w-full max-w-4xl max-h-[80vh] overflow-y-auto p-4 relative">
+              <button
+                onClick={() => setShowThemeModal(false)}
+                className="absolute top-2 right-2 w-8 h-8 flex items-center justify-center rounded-full bg-red-500 text-white font-bold hover:bg-red-600"
+              >
+                ✕
+              </button>
+              <div className="text-center mb-4">
+                <h1 className="font-display text-2xl md:text-3xl" style={{ color: currentTheme.textColor }}>
+                  Choose Your Flavor
+                </h1>
+                <p className="text-sm opacity-70 mt-1" style={{ color: currentTheme.textColor }}>{themes.length} themes</p>
+              </div>
+              <div className="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-10 gap-2 md:gap-3">
+                {themes.map((theme) => (
+                  <button
+                    key={theme.id}
+                    onClick={() => handleThemeSelect(theme)}
+                    className={`theme-swatch ${currentTheme.id === theme.id ? 'active' : ''}`}
+                    style={{ background: theme.gradient }}
+                    title={theme.name}
+                  />
+                ))}
+              </div>
+              <p className="text-center mt-4 font-retro text-xs" style={{ color: currentTheme.textColor }}>
+                Selected: {currentTheme.name}
+              </p>
+            </div>
+          </div>
+        )}
       </div>
       
       {/* Error Log Button - Bottom Left Corner */}
