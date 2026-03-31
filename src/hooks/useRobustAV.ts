@@ -47,8 +47,14 @@ const RTC_CONFIG: RTCConfiguration = {
   iceCandidatePoolSize: 10,
 };
 
-// MAX_PEERS limit for performance
-const MAX_PEERS = 10;
+// MAX_PEERS limit - increased to 25 with better resource management
+const MAX_PEERS = 25;
+
+// Connection stability settings
+const RECONNECT_DELAY_BASE = 2000; // 2 seconds base delay
+const MAX_RECONNECT_ATTEMPTS = 5; // Max attempts before giving up on a peer
+const CONNECTION_TIMEOUT = 30000; // 30 seconds before considering connection dead
+const ICE_RESTART_DELAY = 10000; // 10 seconds before ICE restart
 
 // Adaptive audio constraints
 const getAudioConstraints = (quality: QualityLevel): MediaTrackConstraints => ({
@@ -315,8 +321,9 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
           }
         });
 
-        client.on('error', (err) => {
-          console.error('MQTT error:', err);
+        client.on('error', (err: any) => {
+          const errorMsg = err?.message || err?.code || (typeof err === 'string' ? err : 'Unknown MQTT error');
+          console.error('MQTT error:', errorMsg);
         });
 
         client.on('close', () => {
@@ -472,17 +479,20 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
       if (connectionRecoveryIntervalRef.current) clearInterval(connectionRecoveryIntervalRef.current);
       connectionRecoveryIntervalRef.current = setInterval(() => {
         performConnectionRecovery();
-      }, 5000); // Check every 5 seconds for faster recovery
+      }, 10000); // Check every 10 seconds - less aggressive
 
-      // Connection refresh interval - keeps connections alive every 30 seconds
+      // Connection health check - only fix broken connections, don't refresh healthy ones
       if (connectionRefreshIntervalRef.current) clearInterval(connectionRefreshIntervalRef.current);
       connectionRefreshIntervalRef.current = setInterval(() => {
         peersRef.current.forEach((peer, peerId) => {
-          if (peer.connected) {
-            sendConnectionRefresh(peerId);
+          const pc = peerConnectionsRef.current.get(peerId);
+          // Only reconnect if connection is actually broken
+          if (pc && (pc.connectionState === 'failed' || pc.connectionState === 'disconnected')) {
+            console.log(`Connection to ${peerId} is ${pc.connectionState}, reconnecting...`);
+            reconnectPeer(peerId);
           }
         });
-      }, 30000);
+      }, 10000); // Check every 10 seconds but only fix broken connections
     });
 
     client.on('disconnect', () => {
@@ -494,8 +504,9 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
       }
     });
 
-    client.on('error', (err) => {
-      console.error('AV MQTT error:', err);
+    client.on('error', (err: any) => {
+      const errorMsg = err?.message || err?.code || (typeof err === 'string' ? err : 'Unknown MQTT error');
+      console.error('AV MQTT error:', errorMsg, err);
       setConnectionState('failed');
     });
 
@@ -536,8 +547,8 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
       return;
     }
 
-    // Check heartbeat - SHORTER timeout (12 seconds)
-    if (timeSinceLastPing > 12000) {
+    // Check heartbeat - longer timeout to reduce false positives (30 seconds)
+    if (timeSinceLastPing > 30000) {
       heartbeatMissedCountRef.current++;
       console.log('💓 Heartbeat missed:', heartbeatMissedCountRef.current);
       
@@ -646,12 +657,13 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
       peer.lastPing = Date.now();
       peersRef.current.set(from, peer);
       
+      // Only attempt reconnect if peer is not connected AND we have AV active
+      // AND the peer connection is actually in a failed state (not just starting)
       if (!peer.connected && (localStreamsRef.current.audio || localStreamsRef.current.video)) {
-        const stable = stableConnectionRef.current.get(from);
-        if (!stable) {
-          stableConnectionRef.current.set(from, true);
-        } else {
-          setTimeout(() => reconnectPeer(from), 500);
+        const pc = peerConnectionsRef.current.get(from);
+        if (pc && (pc.connectionState === 'failed' || pc.iceConnectionState === 'failed')) {
+          console.log(`Peer ${from} ping received but connection failed, reconnecting...`);
+          reconnectPeer(from);
         }
       }
     }

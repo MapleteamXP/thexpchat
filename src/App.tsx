@@ -369,47 +369,77 @@ function App() {
     console.log(`Theme changed to: ${currentTheme.name} - This does NOT affect connection`);
   }, [currentTheme.id]); // Only depend on ID to prevent unnecessary updates
 
-  // Auto-scroll to bottom on new messages
-  useEffect(() => {
-    if (messages.length === 0) return;
-    
-    const lastMessage = messages[messages.length - 1];
-    if (lastMessage.username === username) {
-      // Our own message - always scroll to bottom smoothly
-      setTimeout(() => {
-        chatContainerRef.current?.scrollTo({
-          top: chatContainerRef.current.scrollHeight,
-          behavior: 'smooth'
-        });
-        setIsScrolledToBottom(true);
-        setUnreadCount(0);
-      }, 50);
-    } else if (isScrolledToBottom) {
-      // New message from others and we're at bottom - auto scroll
-      setTimeout(() => {
-        chatContainerRef.current?.scrollTo({
-          top: chatContainerRef.current.scrollHeight,
-          behavior: 'smooth'
-        });
-      }, 50);
-    } else {
-      // New message from others but we're scrolled up - increment unread
-      setUnreadCount(prev => prev + 1);
-    }
-  }, [messages, username, isScrolledToBottom]);
+  // Refs for scroll handling - prevent auto-scroll when user is scrolling
+  const isUserScrollingRef = useRef(false);
+  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastMessageCountRef = useRef(messages.length);
 
-  // Handle scroll events
-  const handleScroll = () => {
+  // Handle scroll events - detect when user is actively scrolling
+  const handleScroll = useCallback(() => {
     if (!chatContainerRef.current) return;
     
+    // Mark that user is actively scrolling
+    isUserScrollingRef.current = true;
+    
+    // Clear existing timeout
+    if (scrollTimeoutRef.current) {
+      clearTimeout(scrollTimeoutRef.current);
+    }
+    
+    // Reset user scrolling flag after 1 second of no scroll events
+    scrollTimeoutRef.current = setTimeout(() => {
+      isUserScrollingRef.current = false;
+    }, 1000);
+    
     const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current;
-    const atBottom = scrollHeight - scrollTop - clientHeight < 50;
+    const atBottom = scrollHeight - scrollTop - clientHeight < 100;
     
     setIsScrolledToBottom(atBottom);
     if (atBottom) {
       setUnreadCount(0);
     }
-  };
+  }, []);
+
+  // Auto-scroll effect - ONLY when YOU send a message
+  useEffect(() => {
+    if (messages.length === 0) {
+      lastMessageCountRef.current = 0;
+      return;
+    }
+    
+    // Only process if we have a NEW message
+    if (messages.length <= lastMessageCountRef.current) return;
+    
+    lastMessageCountRef.current = messages.length;
+    const lastMessage = messages[messages.length - 1];
+    
+    // Only auto-scroll for YOUR own messages, and only if not actively scrolling
+    if (lastMessage.username === username && !isUserScrollingRef.current) {
+      setTimeout(() => {
+        if (chatContainerRef.current && !isUserScrollingRef.current) {
+          chatContainerRef.current.scrollTo({
+            top: chatContainerRef.current.scrollHeight,
+            behavior: 'smooth'
+          });
+          setIsScrolledToBottom(true);
+          setUnreadCount(0);
+        }
+      }, 150);
+    } else if (lastMessage.username !== username && isScrolledToBottom && !isUserScrollingRef.current) {
+      // Others' messages: only auto-scroll if already at bottom and not scrolling
+      setTimeout(() => {
+        if (chatContainerRef.current && !isUserScrollingRef.current) {
+          chatContainerRef.current.scrollTo({
+            top: chatContainerRef.current.scrollHeight,
+            behavior: 'smooth'
+          });
+        }
+      }, 150);
+    } else if (lastMessage.username !== username) {
+      // Others' messages when scrolled up: show unread counter
+      setUnreadCount(prev => prev + 1);
+    }
+  }, [messages, username, isScrolledToBottom]);
 
   const scrollToBottom = () => {
     if (chatContainerRef.current) {
@@ -744,17 +774,20 @@ function App() {
             🎨
           </button>
           
-          {/* Reconnect button - shown when disconnected */}
-          {(isAudioEnabled || isVideoEnabled) && connectionState !== 'connected' && (
-            <button
-              onClick={() => window.location.reload()}
-              className="xp-button px-2 md:px-3 py-2 text-xs md:text-sm font-bold text-white animate-pulse"
-              style={{ background: '#ff4444' }}
-              title="Reload page to reconnect"
-            >
-              🔄 Reconnect
-            </button>
-          )}
+          {/* Connection status - stable width container to prevent layout shift */}
+          <div className="w-[80px] md:w-[100px] flex-shrink-0">
+            {(isAudioEnabled || isVideoEnabled) && connectionState !== 'connected' && (
+              <button
+                onClick={() => window.location.reload()}
+                className="xp-button w-full px-1 md:px-3 py-2 text-xs md:text-sm font-bold text-white animate-pulse whitespace-nowrap"
+                style={{ background: '#ff4444' }}
+                title="Reload page to reconnect"
+              >
+                🔄 <span className="hidden md:inline">Reconnect</span>
+                <span className="md:hidden">Retry</span>
+              </button>
+            )}
+          </div>
         </div>
       </div>
       
