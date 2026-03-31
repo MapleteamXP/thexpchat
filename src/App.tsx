@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import './App.css';
 import { themes, type Theme } from './data/themes';
 import { emojiCategories } from './data/emojis';
@@ -106,49 +106,79 @@ function App() {
     });
   }, [connectionState, avPeers.size, isAudioEnabled, isVideoEnabled, connectionQuality]);
 
-  // Voice recording state
+  // Voice recording state - FIXED for accurate timing
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const recordingStartTimeRef = useRef<number>(0);
   const voiceButtonRef = useRef<HTMLButtonElement>(null);
+  const isRecordingRef = useRef(false);
 
-  // Start voice recording
+  // Sync isRecording with ref
+  useEffect(() => {
+    isRecordingRef.current = isRecording;
+  }, [isRecording]);
+
+  // Start voice recording - FIXED
   const startRecording = async () => {
+    if (isRecordingRef.current) return; // Prevent double-start
+    
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
+      // Get audio stream with specific constraints for better quality
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          sampleRate: 48000,
+          channelCount: 1
+        }
+      });
+      
+      // Try to use better codec if available
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
+        ? 'audio/webm;codecs=opus' 
+        : MediaRecorder.isTypeSupported('audio/webm')
+        ? 'audio/webm'
+        : 'audio/mp4';
+      
+      const mediaRecorder = new MediaRecorder(stream, { mimeType });
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
       
       mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
+        if (event.data && event.data.size > 0) {
           audioChunksRef.current.push(event.data);
         }
       };
       
       mediaRecorder.onstop = () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        sendVoiceMessage(audioBlob);
+        // Calculate actual duration
+        const actualDuration = Math.round((Date.now() - recordingStartTimeRef.current) / 1000);
+        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
+        sendVoiceMessage(audioBlob, actualDuration);
         // Stop all tracks
         stream.getTracks().forEach(track => track.stop());
       };
       
-      mediaRecorder.start();
+      // Request data every 100ms to avoid losing chunks
+      mediaRecorder.start(100);
+      recordingStartTimeRef.current = Date.now();
       setIsRecording(true);
       setRecordingDuration(0);
       
-      // Start timer
+      // More accurate timer using Date.now()
       recordingTimerRef.current = setInterval(() => {
-        setRecordingDuration(prev => {
-          if (prev >= 60) { // Max 60 seconds
-            stopRecording();
-            return prev;
-          }
-          return prev + 1;
-        });
-      }, 1000);
+        const elapsed = Math.floor((Date.now() - recordingStartTimeRef.current) / 1000);
+        setRecordingDuration(elapsed);
+        
+        // Auto-stop at 60 seconds
+        if (elapsed >= 60) {
+          forceStopRecording();
+        }
+      }, 100);
       
       addErrorLog('Started voice recording', 'info');
     } catch (err) {
@@ -157,9 +187,21 @@ function App() {
     }
   };
 
-  // Stop voice recording
+  // Force stop (for auto-stop at 60s)
+  const forceStopRecording = () => {
+    if (mediaRecorderRef.current && isRecordingRef.current) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+    }
+  };
+
+  // Stop voice recording - FIXED
   const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
+    if (mediaRecorderRef.current && isRecordingRef.current) {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
       if (recordingTimerRef.current) {
@@ -170,15 +212,17 @@ function App() {
     }
   };
 
-  // Send voice message
-  const sendVoiceMessage = (audioBlob: Blob) => {
+  // Send voice message - FIXED to use actual duration
+  const sendVoiceMessage = (audioBlob: Blob, actualDuration: number) => {
     const reader = new FileReader();
     reader.onload = (event) => {
       const audioData = event.target?.result as string;
       if (audioData && isReady) {
-        sendVoice(audioData, recordingDuration);
+        // Ensure duration is at least 1 second and accurate
+        const duration = Math.max(1, Math.min(actualDuration, 60));
+        sendVoice(audioData, duration);
         setTimeout(scrollToBottom, 100);
-        addErrorLog(`Sent voice message: ${recordingDuration}s`, 'info');
+        addErrorLog(`Sent voice message: ${duration}s`, 'info');
       }
     };
     reader.readAsDataURL(audioBlob);
@@ -190,7 +234,7 @@ function App() {
       if (recordingTimerRef.current) {
         clearInterval(recordingTimerRef.current);
       }
-      if (mediaRecorderRef.current && isRecording) {
+      if (mediaRecorderRef.current && isRecordingRef.current) {
         mediaRecorderRef.current.stop();
       }
     };
@@ -309,7 +353,9 @@ function App() {
     }
   }, []);
 
+  // THEME EFFECT - completely isolated from connection logic
   useEffect(() => {
+    // Only update CSS variables - NEVER affects connection state
     document.documentElement.style.setProperty('--xp-bg-primary', currentTheme.primary);
     document.documentElement.style.setProperty('--xp-bg-gradient', currentTheme.gradient);
     document.documentElement.style.setProperty('--xp-accent', currentTheme.accent);
@@ -318,7 +364,10 @@ function App() {
     document.documentElement.style.setProperty('--xp-panel-bg', currentTheme.panelBg);
     document.documentElement.style.setProperty('--xp-panel-border', currentTheme.panelBorder);
     localStorage.setItem('xp-chat-theme', currentTheme.id);
-  }, [currentTheme]);
+    
+    // Log theme change but don't affect connection
+    console.log(`Theme changed to: ${currentTheme.name} - This does NOT affect connection`);
+  }, [currentTheme.id]); // Only depend on ID to prevent unnecessary updates
 
   // Track new messages for unread count instead of auto-scroll
   useEffect(() => {
@@ -390,13 +439,18 @@ function App() {
     }
   };
 
-  const handleThemeSelect = (theme: Theme) => {
-    setCurrentTheme(theme);
+  const handleThemeSelect = useCallback((theme: Theme) => {
+    // Theme changes should NEVER affect connection
+    // Only update if different theme
+    if (theme.id !== currentTheme.id) {
+      console.log(`Switching theme from ${currentTheme.name} to ${theme.name}`);
+      setCurrentTheme(theme);
+    }
     // If already in chat, stay in chat, otherwise go to room selection
     if (currentView !== 'chat') {
       setCurrentView('room');
     }
-  };
+  }, [currentTheme.id, currentView]);
 
   const handleJoinRoom = () => {
     const code = tempRoomCode.trim() || `room-${Math.random().toString(36).substr(2, 6)}`;
@@ -794,60 +848,28 @@ function App() {
       {/* Main content area - SEPARATED LAYOUT */}
       <div className="flex-1 flex flex-col md:flex-row gap-2 md:gap-4 p-2 md:p-4 overflow-hidden">
         
-        {/* LEFT PANEL: Video Grid - Fixed position, independent scroll */}
-        <div className="flex flex-col gap-2 md:w-64 lg:w-72 shrink-0">
+        {/* LEFT PANEL: Video Grid - Optimized for up to 10 participants */}
+        <div className="flex flex-col gap-2 md:w-64 lg:w-80 shrink-0">
           {/* Video panel - only show when video enabled or peers exist */}
           {(isVideoEnabled || avPeers.size > 0) && (
-            <div className="xp-panel p-2 md:p-4 flex flex-col gap-2 max-h-[35vh] md:max-h-[calc(100vh-200px)] overflow-y-auto">
-              <h3 className="text-xs font-bold mb-1 flex items-center justify-between sticky top-0 bg-inherit py-1" style={{ color: currentTheme.textColor }}>
-                <span>Video</span>
+            <div className="xp-panel p-2 md:p-3 flex flex-col gap-2 max-h-[40vh] md:max-h-[calc(100vh-180px)] overflow-y-auto">
+              <h3 className="text-xs font-bold mb-1 flex items-center justify-between sticky top-0 bg-inherit py-1 z-10" style={{ color: currentTheme.textColor }}>
+                <span>Video ({avPeers.size + (isVideoEnabled ? 1 : 0)}/10)</span>
                 {avPeers.size > 0 && (
-                  <span className="text-[10px] opacity-60">{avPeers.size + (isVideoEnabled ? 1 : 0)} participants</span>
+                  <span className="text-[10px] opacity-60">
+                    {avPeers.size + (isVideoEnabled ? 1 : 0)} participants
+                  </span>
                 )}
               </h3>
               
-              {/* Local video */}
-              {isVideoEnabled && localVideoStream && (
-                <div className="relative aspect-video bg-black rounded-lg overflow-hidden border-2 border-green-500/50 shrink-0">
-                  <video
-                    ref={localVideoRef}
-                    autoPlay
-                    muted
-                    playsInline
-                    className="w-full h-full object-cover"
-                    style={{ transform: 'scaleX(-1)' }}
-                    onLoadedMetadata={(e) => {
-                      const video = e.currentTarget;
-                      video.play().catch(err => console.log('Local video play failed:', err));
-                    }}
-                  />
-                  <span className="absolute bottom-1 left-1 text-[10px] bg-black/60 px-1.5 py-0.5 rounded text-white font-medium">
-                    You
-                  </span>
-                  {connectionQuality !== 'high' && (
-                    <span className="absolute top-1 right-1 text-[8px] bg-black/60 px-1 rounded text-white">
-                      {connectionQuality === 'medium' ? 'SD' : connectionQuality === 'low' ? 'LD' : 'AU'}
-                    </span>
-                  )}
-                </div>
-              )}
-              
-              {/* Remote videos */}
-              {Array.from(avPeers.values()).map((peer) => (
-                peer.videoStream && (
-                  <div key={peer.id} className="relative aspect-video bg-black rounded-lg overflow-hidden shrink-0">
-                    <RemoteVideo stream={peer.videoStream} username={peer.username} />
-                    <span className="absolute bottom-1 left-1 text-[10px] bg-black/60 px-1.5 py-0.5 rounded text-white font-medium">
-                      {peer.username}
-                    </span>
-                    {!peer.connected && (
-                      <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
-                        <span className="text-xs text-white animate-pulse">Reconnecting...</span>
-                      </div>
-                    )}
-                  </div>
-                )
-              ))}
+              {/* Video Grid - Memoized to prevent re-render on theme changes */}
+              <VideoGrid 
+                isVideoEnabled={isVideoEnabled}
+                localVideoStream={localVideoStream}
+                localVideoRef={localVideoRef}
+                avPeers={avPeers}
+                connectionQuality={connectionQuality}
+              />
             </div>
           )}
           
@@ -1520,6 +1542,76 @@ function RemoteVideo({ stream, username }: { stream: MediaStream; username: stri
     </div>
   );
 }
+
+// Video Grid Component - Memoized to prevent re-render on theme changes
+const VideoGrid = React.memo(({ 
+  isVideoEnabled, 
+  localVideoStream, 
+  localVideoRef, 
+  avPeers, 
+  connectionQuality 
+}: {
+  isVideoEnabled: boolean;
+  localVideoStream: MediaStream | null;
+  localVideoRef: React.RefObject<HTMLVideoElement>;
+  avPeers: Map<string, any>;
+  connectionQuality: string;
+}) => {
+  const peerCount = avPeers.size;
+  
+  return (
+    <div className={`grid gap-1.5 ${
+      peerCount > 3 ? 'grid-cols-2' : 'grid-cols-1'
+    }`}>
+      {/* Local video */}
+      {isVideoEnabled && localVideoStream && (
+        <div className={`relative bg-black rounded-lg overflow-hidden border-2 border-green-500/50 shrink-0 ${
+          peerCount > 3 ? 'aspect-square' : 'aspect-video'
+        }`}>
+          <video
+            ref={localVideoRef}
+            autoPlay
+            muted
+            playsInline
+            className="w-full h-full object-cover"
+            style={{ transform: 'scaleX(-1)' }}
+            onLoadedMetadata={(e) => {
+              const video = e.currentTarget;
+              video.play().catch(err => console.log('Local video play failed:', err));
+            }}
+          />
+          <span className="absolute bottom-1 left-1 text-[9px] bg-black/60 px-1 py-0.5 rounded text-white font-medium">
+            You
+          </span>
+          {connectionQuality !== 'high' && (
+            <span className="absolute top-1 right-1 text-[7px] bg-black/60 px-1 rounded text-white">
+              {connectionQuality === 'medium' ? 'SD' : connectionQuality === 'low' ? 'LD' : 'AU'}
+            </span>
+          )}
+        </div>
+      )}
+      
+      {/* Remote videos */}
+      {Array.from(avPeers.values()).map((peer) => (
+        peer.videoStream && (
+          <div key={peer.id} className={`relative bg-black rounded-lg overflow-hidden shrink-0 ${
+            peerCount > 3 ? 'aspect-square' : 'aspect-video'
+          }`}>
+            <RemoteVideo stream={peer.videoStream} username={peer.username} />
+            <span className="absolute bottom-1 left-1 text-[9px] bg-black/60 px-1 py-0.5 rounded text-white font-medium">
+              {peer.username}
+            </span>
+            {!peer.connected && (
+              <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                <span className="text-[10px] text-white animate-pulse">⟳</span>
+              </div>
+            )}
+          </div>
+        )
+      ))}
+    </div>
+  );
+});
 
 // Audio-only peer indicator with visual feedback
 function AudioPeerIndicator({ peer }: { peer: any }) {

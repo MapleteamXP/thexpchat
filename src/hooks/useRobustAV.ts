@@ -24,15 +24,12 @@ interface LocalStreams {
 type QualityLevel = 'high' | 'medium' | 'low' | 'audio-only';
 type ConnectionState = 'connected' | 'connecting' | 'disconnected' | 'reconnecting' | 'failed';
 
-// Enhanced RTC config - OPTIMIZED for fast connection
-// Using trickle ICE for faster establishment
+// Enhanced RTC config - OPTIMIZED for multi-peer (up to 10 people)
 const RTC_CONFIG: RTCConfiguration = {
   iceServers: [
-    // Google's public STUN servers
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
-    // Open Relay - FAST and reliable
     {
       urls: 'turn:openrelay.metered.ca:80',
       username: 'openrelayproject',
@@ -43,23 +40,15 @@ const RTC_CONFIG: RTCConfiguration = {
       username: 'openrelayproject',
       credential: 'openrelayproject',
     },
-    {
-      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
-    // Twilio's TURN servers (backup)
-    {
-      urls: 'turn:global.turn.twilio.com:3478?transport=udp',
-      username: 'f4b4035eaa76b7a9f187e111a2615b4392f14d4c82c7eb60e47d9a46d95a8519',
-      credential: 'WKg7oO/acUNOXqhkC4gkU9Gl1Z6K3w3/S6NhvCyShvI=',
-    },
   ],
   bundlePolicy: 'max-bundle' as RTCBundlePolicy,
   rtcpMuxPolicy: 'require' as RTCRtcpMuxPolicy,
   iceTransportPolicy: 'all',
-  iceCandidatePoolSize: 10, // Pre-gather candidates for faster connections
+  iceCandidatePoolSize: 10,
 };
+
+// MAX_PEERS limit for performance
+const MAX_PEERS = 10;
 
 // Adaptive audio constraints
 const getAudioConstraints = (quality: QualityLevel): MediaTrackConstraints => ({
@@ -70,45 +59,53 @@ const getAudioConstraints = (quality: QualityLevel): MediaTrackConstraints => ({
   channelCount: quality === 'audio-only' ? 1 : 2,
 });
 
-// Adaptive video constraints
-const getVideoConstraints = (quality: QualityLevel, isMobile: boolean): MediaTrackConstraints => {
+// Adaptive video constraints - OPTIMIZED for multi-peer
+const getVideoConstraints = (quality: QualityLevel, isMobile: boolean, peerCount: number = 0): MediaTrackConstraints => {
   const constraints: MediaTrackConstraints = {
     facingMode: 'user',
   };
 
-  if (quality === 'high' && !isMobile) {
-    constraints.width = { ideal: 1280, max: 1920 };
-    constraints.height = { ideal: 720, max: 1080 };
-    constraints.frameRate = { ideal: 30, max: 30 };
-  } else if (quality === 'medium' || isMobile) {
-    constraints.width = { ideal: 640, max: 1280 };
-    constraints.height = { ideal: 480, max: 720 };
-    constraints.frameRate = { ideal: 24, max: 24 };
+  // Reduce quality as more peers join
+  const scaleFactor = Math.max(0.3, 1 - (peerCount * 0.08)); // Reduce by 8% per peer
+
+  if (quality === 'high' && !isMobile && peerCount < 3) {
+    constraints.width = { ideal: Math.floor(1280 * scaleFactor), max: 1280 };
+    constraints.height = { ideal: Math.floor(720 * scaleFactor), max: 720 };
+    constraints.frameRate = { ideal: 24, max: 30 };
+  } else if ((quality === 'medium' || isMobile) && peerCount < 6) {
+    constraints.width = { ideal: Math.floor(640 * scaleFactor), max: 640 };
+    constraints.height = { ideal: Math.floor(480 * scaleFactor), max: 480 };
+    constraints.frameRate = { ideal: 15, max: 24 };
   } else {
-    constraints.width = { ideal: 480, max: 640 };
-    constraints.height = { ideal: 360, max: 480 };
-    constraints.frameRate = { ideal: 15, max: 15 };
+    // Low quality for many peers
+    constraints.width = { ideal: Math.floor(480 * scaleFactor), max: 480 };
+    constraints.height = { ideal: Math.floor(360 * scaleFactor), max: 360 };
+    constraints.frameRate = { ideal: 10, max: 15 };
   }
 
   return constraints;
 };
 
-const getAudioBitrate = (quality: QualityLevel): number => {
+const getAudioBitrate = (quality: QualityLevel, peerCount: number = 0): number => {
+  // Reduce audio bitrate as more peers join
+  const scale = Math.max(0.5, 1 - (peerCount * 0.05));
   switch (quality) {
-    case 'high': return 256000;
-    case 'medium': return 128000;
-    case 'low': return 64000;
-    case 'audio-only': return 64000;
-    default: return 128000;
+    case 'high': return Math.floor(256000 * scale);
+    case 'medium': return Math.floor(128000 * scale);
+    case 'low': return Math.floor(64000 * scale);
+    case 'audio-only': return Math.floor(64000 * scale);
+    default: return Math.floor(128000 * scale);
   }
 };
 
-const getVideoBitrate = (quality: QualityLevel): number => {
+const getVideoBitrate = (quality: QualityLevel, peerCount: number = 0): number => {
+  // Reduce video bitrate significantly as more peers join
+  const scale = Math.max(0.25, 1 - (peerCount * 0.1));
   switch (quality) {
-    case 'high': return 1500000;
-    case 'medium': return 800000;
-    case 'low': return 400000;
-    default: return 800000;
+    case 'high': return Math.floor(1500000 * scale);
+    case 'medium': return Math.floor(800000 * scale);
+    case 'low': return Math.floor(400000 * scale);
+    default: return Math.floor(800000 * scale);
   }
 };
 
@@ -407,9 +404,14 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
     });
   };
 
-  // Main connection effect
+  // Main connection effect - ONLY depends on roomCode and isActive
+  // NOTE: This effect is intentionally isolated from theme/visual changes
+  // Theme changes should NEVER affect the WebRTC connection
   useEffect(() => {
     if (!isActive || !roomCode) return;
+
+    console.log(`🟢 Starting AV connection to room: ${roomCode} for user: ${localUsername}`);
+    console.log('⚠️  NOTE: Theme/visual changes do NOT affect this connection');
 
     wasConnectedRef.current = true;
     setConnectionState('connecting');
@@ -797,6 +799,13 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
   const createPeerConnection = async (peerId: string, peerUsername: string, isInitiator: boolean): Promise<RTCPeerConnection | null> => {
     console.log('Creating AV peer:', peerId, 'initiator:', isInitiator);
     
+    // Check max peers limit
+    if (peersRef.current.size >= MAX_PEERS) {
+      console.warn(`Max peers (${MAX_PEERS}) reached, rejecting new connection to:`, peerId);
+      setError(`Maximum ${MAX_PEERS} participants reached`);
+      return null;
+    }
+    
     const existing = peersRef.current.get(peerId);
     if (existing) {
       cleanupPeer(existing);
@@ -1058,13 +1067,14 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
   const applyBitrateConstraint = (sender: RTCRtpSender, kind: 'audio' | 'video', quality?: QualityLevel) => {
     const params = sender.getParameters();
     const targetQuality = quality || currentQualityRef.current;
+    const peerCount = peersRef.current.size;
     if (params.encodings && params.encodings[0]) {
       if (kind === 'audio') {
-        params.encodings[0].maxBitrate = getAudioBitrate(targetQuality);
+        params.encodings[0].maxBitrate = getAudioBitrate(targetQuality, peerCount);
         params.encodings[0].priority = 'high';
       } else {
-        params.encodings[0].maxBitrate = getVideoBitrate(targetQuality);
-        params.encodings[0].priority = 'medium';
+        params.encodings[0].maxBitrate = getVideoBitrate(targetQuality, peerCount);
+        params.encodings[0].priority = peerCount > 5 ? 'low' : 'medium';
       }
       sender.setParameters(params).catch(console.error);
     }
@@ -1429,7 +1439,8 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
     try {
       setError(null);
       const quality = targetQuality || currentQualityRef.current;
-      console.log('Enabling video with quality:', quality);
+      const peerCount = peersRef.current.size;
+      console.log('Enabling video with quality:', quality, 'peers:', peerCount);
       
       // Stop and remove existing video tracks
       if (localStreamsRef.current.video) {
@@ -1443,10 +1454,10 @@ export function useRobustAV(roomCode: string, localUsername: string, isActive: b
         return true;
       }
       
-      // Get new video stream
+      // Get new video stream with peer-aware constraints
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
-        video: getVideoConstraints(quality, isMobileRef.current),
+        video: getVideoConstraints(quality, isMobileRef.current, peerCount),
       });
       
       localStreamsRef.current.video = stream;
