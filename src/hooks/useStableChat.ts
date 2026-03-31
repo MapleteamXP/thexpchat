@@ -6,8 +6,10 @@ export interface ChatMessage {
   username: string;
   text: string;
   timestamp: number;
-  type: 'chat' | 'system' | 'image';
+  type: 'chat' | 'system' | 'image' | 'voice';
   imageData?: string;
+  voiceData?: string;
+  voiceDuration?: number;
 }
 
 interface PeerUser {
@@ -162,6 +164,18 @@ export function useStableChat(localUsername: string, roomCode: string) {
         }]);
         break;
         
+      case 'voice':
+        setMessages(prev => [...prev, {
+          id: `${data.timestamp}-${data.from}`,
+          username: data.username,
+          text: data.text || '🎤 Voice message',
+          timestamp: data.timestamp,
+          type: 'voice',
+          voiceData: data.voiceData,
+          voiceDuration: data.voiceDuration || 0,
+        }]);
+        break;
+        
       case 'join':
         usersRef.current.set(data.from, {
           id: data.from,
@@ -243,6 +257,27 @@ export function useStableChat(localUsername: string, roomCode: string) {
     }]);
   }, [isReady, localUsername, roomCode]);
 
+  const sendVoice = useCallback((voiceData: string, duration: number, caption?: string) => {
+    if (!isReady) return;
+    
+    publish('voice', { 
+      username: localUsername, 
+      voiceData,
+      voiceDuration: duration,
+      text: caption || `🎤 Voice message (${duration}s)`
+    });
+    
+    setMessages(prev => [...prev, {
+      id: `voice-${Date.now()}-${myIdRef.current}`,
+      username: localUsername,
+      text: caption || `🎤 Voice message (${duration}s)`,
+      timestamp: Date.now(),
+      type: 'voice',
+      voiceData,
+      voiceDuration: duration,
+    }]);
+  }, [isReady, localUsername, roomCode]);
+
   return {
     messages,
     users,
@@ -251,5 +286,6 @@ export function useStableChat(localUsername: string, roomCode: string) {
     isReady,
     sendMessage,
     sendImage,
+    sendVoice,
   };
 }

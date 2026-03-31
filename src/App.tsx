@@ -69,6 +69,7 @@ function App() {
     isReady,
     sendMessage: sendChatMessage,
     sendImage,
+    sendVoice,
   } = useStableChat(username, roomCode);
 
   const {
@@ -91,40 +92,168 @@ function App() {
   // Log AV errors
   useEffect(() => {
     if (avError) {
-      addErrorLog(`AV Error: ${avError}`);
+      addErrorLog(`AV Error: ${avError}`, 'error', { connectionState, peerCount: avPeers.size });
     }
   }, [avError]);
 
   // Log connection state changes
   useEffect(() => {
-    addErrorLog(`Connection state: ${connectionState}`);
-  }, [connectionState]);
+    addErrorLog(`Connection state changed to: ${connectionState}`, 'info', { 
+      peerCount: avPeers.size, 
+      audioEnabled: isAudioEnabled, 
+      videoEnabled: isVideoEnabled,
+      quality: connectionQuality 
+    });
+  }, [connectionState, avPeers.size, isAudioEnabled, isVideoEnabled, connectionQuality]);
+
+  // Voice recording state
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const voiceButtonRef = useRef<HTMLButtonElement>(null);
+
+  // Start voice recording
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+      
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+      
+      mediaRecorder.onstop = () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        sendVoiceMessage(audioBlob);
+        // Stop all tracks
+        stream.getTracks().forEach(track => track.stop());
+      };
+      
+      mediaRecorder.start();
+      setIsRecording(true);
+      setRecordingDuration(0);
+      
+      // Start timer
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingDuration(prev => {
+          if (prev >= 60) { // Max 60 seconds
+            stopRecording();
+            return prev;
+          }
+          return prev + 1;
+        });
+      }, 1000);
+      
+      addErrorLog('Started voice recording', 'info');
+    } catch (err) {
+      addErrorLog(`Failed to start recording: ${err}`, 'error');
+      alert('Could not access microphone. Please allow microphone access.');
+    }
+  };
+
+  // Stop voice recording
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+      addErrorLog('Stopped voice recording', 'info');
+    }
+  };
+
+  // Send voice message
+  const sendVoiceMessage = (audioBlob: Blob) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const audioData = event.target?.result as string;
+      if (audioData && isReady) {
+        sendVoice(audioData, recordingDuration);
+        setTimeout(scrollToBottom, 100);
+        addErrorLog(`Sent voice message: ${recordingDuration}s`, 'info');
+      }
+    };
+    reader.readAsDataURL(audioBlob);
+  };
+
+  // Cleanup recording on unmount
+  useEffect(() => {
+    return () => {
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+      }
+      if (mediaRecorderRef.current && isRecording) {
+        mediaRecorderRef.current.stop();
+      }
+    };
+  }, []);
 
   // Track if user has interacted (required for audio)
   const [hasUserInteracted, setHasUserInteracted] = useState(false);
   const [audioBlocked, setAudioBlocked] = useState(false);
 
-  // Error log state
-  const [errorLogs, setErrorLogs] = useState<string[]>([]);
+  // Error log state with detailed info
+  const [errorLogs, setErrorLogs] = useState<Array<{type: 'error' | 'info' | 'warn', message: string, timestamp: string, details?: any}>>([]);
   const [showErrorLog, setShowErrorLog] = useState(false);
+  const [diagnosticsData, setDiagnosticsData] = useState<any>(null);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
   
   // Function to add error to log
-  const addErrorLog = (message: string) => {
+  const addErrorLog = (message: string, type: 'error' | 'info' | 'warn' = 'error', details?: any) => {
     const timestamp = new Date().toLocaleTimeString();
-    setErrorLogs(prev => [...prev.slice(-49), `[${timestamp}] ${message}`]);
+    const logEntry = { type, message, timestamp, details };
+    setErrorLogs(prev => [...prev.slice(-99), logEntry]);
   };
   
-  // Capture console errors
+  // Capture console errors, warns, and info
   useEffect(() => {
     const originalError = console.error;
+    const originalWarn = console.warn;
+    const originalLog = console.log;
+    
     console.error = (...args: any[]) => {
       originalError.apply(console, args);
-      addErrorLog(args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+      const message = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+      if (message.includes('AV') || message.includes('audio') || message.includes('video') || message.includes('connection') || message.includes('MQTT')) {
+        addErrorLog(message, 'error');
+      }
     };
+    
+    console.warn = (...args: any[]) => {
+      originalWarn.apply(console, args);
+      const message = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+      if (message.includes('AV') || message.includes('audio') || message.includes('video')) {
+        addErrorLog(message, 'warn');
+      }
+    };
+    
     return () => {
       console.error = originalError;
+      console.warn = originalWarn;
+      console.log = originalLog;
     };
   }, []);
+  
+  // Run full diagnostics
+  const runFullDiagnostics = async () => {
+    addErrorLog('Running full diagnostics...', 'info');
+    try {
+      const diag = await getDiagnostics();
+      setDiagnosticsData(diag);
+      setShowDiagnostics(true);
+      addErrorLog('Diagnostics completed successfully', 'info', { peerCount: diag.peers.length, mqttConnected: diag.mqttConnected });
+    } catch (err) {
+      addErrorLog(`Diagnostics failed: ${err}`, 'error');
+    }
+  };
 
   // Global audio unlock on first user interaction
   useEffect(() => {
@@ -546,20 +675,6 @@ function App() {
             🎨
           </button>
           
-          {/* Debug/Diagnostics button */}
-          <button
-            onClick={async () => {
-              const diag = await getDiagnostics();
-              alert('Diagnostics logged to console. Press F12 to view.');
-              console.log(JSON.stringify(diag, null, 2));
-            }}
-            className="xp-button px-2 md:px-3 py-2 text-xs md:text-sm font-bold text-white hidden md:block"
-            style={{ background: '#666' }}
-            title="Run diagnostics (F12 for console)"
-          >
-            🔧
-          </button>
-
           {/* Reconnect button - shown when disconnected */}
           {(isAudioEnabled || isVideoEnabled) && connectionState !== 'connected' && (
             <button
@@ -791,6 +906,13 @@ function App() {
                       }}
                     />
                   </div>
+                ) : msg.type === 'voice' && msg.voiceData ? (
+                  <VoiceMessage 
+                    voiceData={msg.voiceData} 
+                    duration={msg.voiceDuration || 0}
+                    isOwn={msg.username === username}
+                    theme={currentTheme}
+                  />
                 ) : (
                   <div 
                     className={`max-w-[80%] px-3 py-2 rounded-2xl text-sm md:text-base ${
@@ -843,6 +965,34 @@ function App() {
                 onChange={handleImageSelect}
                 className="hidden"
               />
+              
+              {/* Voice recording button */}
+              <button
+                ref={voiceButtonRef}
+                onMouseDown={startRecording}
+                onMouseUp={stopRecording}
+                onMouseLeave={stopRecording}
+                onTouchStart={startRecording}
+                onTouchEnd={stopRecording}
+                className={`p-2 rounded-full transition-all relative ${
+                  isRecording 
+                    ? 'bg-red-500 text-white animate-pulse' 
+                    : 'hover:bg-white/10 text-lg md:text-xl'
+                }`}
+                style={isRecording ? { background: '#ef4444' } : {}}
+                title="Hold to record voice message"
+              >
+                {isRecording ? (
+                  <span className="flex items-center gap-1">
+                    🎙️ <span className="text-xs font-bold">{recordingDuration}s</span>
+                  </span>
+                ) : (
+                  '🎙️'
+                )}
+                {isRecording && (
+                  <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-ping" />
+                )}
+              </button>
               
               <input
                 ref={messageInputRef}
@@ -1031,53 +1181,123 @@ function App() {
       {/* Error Log Button - Bottom Left Corner */}
       <button
         onClick={() => setShowErrorLog(!showErrorLog)}
-        className="fixed bottom-2 left-2 z-50 px-2 py-1 rounded text-[10px] opacity-30 hover:opacity-100 transition-opacity"
+        className="fixed bottom-2 left-2 z-50 px-2 py-1 rounded text-[10px] opacity-30 hover:opacity-100 transition-opacity flex items-center gap-1"
         style={{ 
-          background: 'rgba(0,0,0,0.5)', 
+          background: errorLogs.filter(l => l.type === 'error').length > 0 ? 'rgba(255,0,0,0.5)' : 'rgba(0,0,0,0.5)', 
           color: '#fff',
           border: '1px solid rgba(255,255,255,0.2)'
         }}
-        title="Error Log"
+        title="Error Log & Diagnostics"
       >
-        📝 {errorLogs.length > 0 && `(${errorLogs.length})`}
+        📝 
+        {errorLogs.length > 0 && (
+          <span className="bg-red-500 text-white px-1 rounded text-[8px]">
+            {errorLogs.filter(l => l.type === 'error').length}
+          </span>
+        )}
       </button>
       
-      {/* Error Log Modal */}
+      {/* Error Log & Diagnostics Modal */}
       {showErrorLog && (
         <div 
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
           onClick={() => setShowErrorLog(false)}
         >
           <div 
-            className="xp-panel w-full max-w-2xl max-h-[80vh] flex flex-col"
+            className="xp-panel w-full max-w-3xl max-h-[85vh] flex flex-col"
             onClick={e => e.stopPropagation()}
           >
             <div className="flex items-center justify-between p-3 border-b" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
-              <h3 className="text-sm font-bold" style={{ color: currentTheme.textColor }}>Error Log</h3>
+              <div className="flex items-center gap-3">
+                <h3 className="text-sm font-bold" style={{ color: currentTheme.textColor }}>📋 System Log & Diagnostics</h3>
+                <span className="text-xs opacity-50" style={{ color: currentTheme.textColor }}>
+                  {errorLogs.filter(l => l.type === 'error').length} errors, {errorLogs.filter(l => l.type === 'warn').length} warnings
+                </span>
+              </div>
               <div className="flex gap-2">
                 <button
+                  onClick={runFullDiagnostics}
+                  className="text-xs px-3 py-1.5 rounded font-bold text-white"
+                  style={{ background: currentTheme.gradient }}
+                >
+                  🔧 Run Diagnostics
+                </button>
+                <button
                   onClick={() => setErrorLogs([])}
-                  className="text-xs px-2 py-1 rounded hover:bg-white/10"
+                  className="text-xs px-2 py-1.5 rounded hover:bg-white/10"
                   style={{ color: currentTheme.textColor }}
                 >
                   Clear
                 </button>
                 <button
                   onClick={() => setShowErrorLog(false)}
-                  className="text-xs px-2 py-1 rounded hover:bg-white/10"
+                  className="text-xs px-2 py-1.5 rounded hover:bg-white/10"
                   style={{ color: currentTheme.textColor }}
                 >
                   ✕
                 </button>
               </div>
             </div>
+            
+            {/* Diagnostics Panel */}
+            {showDiagnostics && diagnosticsData && (
+              <div className="p-3 border-b bg-black/20" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-xs font-bold" style={{ color: currentTheme.textColor }}>📊 Diagnostics Report</h4>
+                  <button 
+                    onClick={() => setShowDiagnostics(false)}
+                    className="text-[10px] opacity-50 hover:opacity-100"
+                    style={{ color: currentTheme.textColor }}
+                  >
+                    Hide
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-[10px] font-mono" style={{ color: currentTheme.textColor }}>
+                  <div className="bg-black/20 p-2 rounded">
+                    <span className="opacity-70">MQTT:</span> {diagnosticsData.mqttConnected ? '🟢 Connected' : '🔴 Disconnected'}
+                  </div>
+                  <div className="bg-black/20 p-2 rounded">
+                    <span className="opacity-70">Peers:</span> {diagnosticsData.peers.length}
+                  </div>
+                  <div className="bg-black/20 p-2 rounded">
+                    <span className="opacity-70">Audio:</span> {diagnosticsData.isAudioEnabled ? '🎤 ON' : '🔇 OFF'}
+                  </div>
+                  <div className="bg-black/20 p-2 rounded">
+                    <span className="opacity-70">Video:</span> {diagnosticsData.isVideoEnabled ? '📹 ON' : '📷 OFF'}
+                  </div>
+                  <div className="bg-black/20 p-2 rounded col-span-2">
+                    <span className="opacity-70">Quality:</span> {diagnosticsData.connectionQuality}
+                  </div>
+                  {diagnosticsData.peers.map((peer: any, i: number) => (
+                    <div key={i} className="bg-black/20 p-2 rounded col-span-2">
+                      <span className="opacity-70">Peer {i+1} ({peer.username}):</span> {peer.connectionState} | ICE: {peer.iceState}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            
+            {/* Log Entries */}
             <div className="flex-1 overflow-y-auto p-3 space-y-1 font-mono text-xs">
               {errorLogs.length === 0 ? (
-                <span className="opacity-50" style={{ color: currentTheme.textColor }}>No errors logged yet...</span>
+                <span className="opacity-50" style={{ color: currentTheme.textColor }}>No events logged yet...</span>
               ) : (
                 errorLogs.map((log, i) => (
-                  <div key={i} className="break-all" style={{ color: currentTheme.textColor }}>
-                    {log}
+                  <div 
+                    key={i} 
+                    className={`break-all p-1.5 rounded ${log.type === 'error' ? 'bg-red-500/20' : log.type === 'warn' ? 'bg-yellow-500/20' : 'bg-blue-500/10'}`}
+                    style={{ color: currentTheme.textColor }}
+                  >
+                    <span className="opacity-50">[{log.timestamp}]</span>
+                    <span className={`ml-1 font-bold ${log.type === 'error' ? 'text-red-400' : log.type === 'warn' ? 'text-yellow-400' : 'text-blue-400'}`}>
+                      {log.type === 'error' ? '❌' : log.type === 'warn' ? '⚠️' : 'ℹ️'}
+                    </span>
+                    <span className="ml-1">{log.message}</span>
+                    {log.details && (
+                      <span className="ml-1 opacity-50 text-[9px]">
+                        {JSON.stringify(log.details)}
+                      </span>
+                    )}
                   </div>
                 ))
               )}
@@ -1085,6 +1305,104 @@ function App() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// Voice message component with playback
+function VoiceMessage({ voiceData, duration, isOwn, theme }: { voiceData: string; duration: number; isOwn: boolean; theme: Theme }) {
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const progressRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const audio = new Audio(voiceData);
+    audioRef.current = audio;
+    
+    audio.onplay = () => setIsPlaying(true);
+    audio.onpause = () => setIsPlaying(false);
+    audio.onended = () => {
+      setIsPlaying(false);
+      setCurrentTime(0);
+    };
+    audio.ontimeupdate = () => setCurrentTime(audio.currentTime);
+    
+    return () => {
+      audio.pause();
+      audio.src = '';
+    };
+  }, [voiceData]);
+
+  const togglePlay = () => {
+    if (audioRef.current) {
+      if (isPlaying) {
+        audioRef.current.pause();
+      } else {
+        audioRef.current.play().catch(err => console.error('Audio play failed:', err));
+      }
+    }
+  };
+
+  const handleProgressClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (audioRef.current && progressRef.current) {
+      const rect = progressRef.current.getBoundingClientRect();
+      const percent = (e.clientX - rect.left) / rect.width;
+      audioRef.current.currentTime = percent * duration;
+    }
+  };
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  return (
+    <div 
+      className={`max-w-[250px] px-3 py-2 rounded-2xl ${
+        isOwn 
+          ? 'bg-gradient-to-r from-cyan-400 to-blue-500 text-white rounded-br-sm' 
+          : 'bg-white/90 text-gray-800 rounded-bl-sm'
+      }`}
+    >
+      <div className="flex items-center gap-2">
+        <button 
+          onClick={togglePlay}
+          className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${
+            isPlaying ? 'animate-pulse' : ''
+          }`}
+          style={{ 
+            background: isOwn ? 'rgba(255,255,255,0.3)' : theme.gradient,
+            color: isOwn ? '#fff' : '#fff'
+          }}
+        >
+          {isPlaying ? '⏸️' : '▶️'}
+        </button>
+        <div className="flex-1">
+          <div className="text-xs font-medium mb-1">
+            {isPlaying ? 'Playing...' : '🎤 Voice message'}
+          </div>
+          <div 
+            ref={progressRef}
+            onClick={handleProgressClick}
+            className="h-1.5 rounded-full cursor-pointer overflow-hidden"
+            style={{ background: isOwn ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.2)' }}
+          >
+            <div 
+              className="h-full rounded-full transition-all"
+              style={{ 
+                width: `${(currentTime / duration) * 100}%`,
+                background: isOwn ? '#fff' : theme.primary
+              }}
+            />
+          </div>
+          <div className="flex justify-between text-[10px] mt-0.5 opacity-70">
+            <span>{formatTime(currentTime)}</span>
+            <span>{formatTime(duration)}</span>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
