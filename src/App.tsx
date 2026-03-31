@@ -369,16 +369,31 @@ function App() {
     console.log(`Theme changed to: ${currentTheme.name} - This does NOT affect connection`);
   }, [currentTheme.id]); // Only depend on ID to prevent unnecessary updates
 
-  // Track new messages for unread count instead of auto-scroll
+  // Auto-scroll to bottom on new messages
   useEffect(() => {
     if (messages.length === 0) return;
     
     const lastMessage = messages[messages.length - 1];
     if (lastMessage.username === username) {
-      // Our own message - scroll to bottom
-      scrollToBottom();
-    } else if (!isScrolledToBottom) {
-      // New message from others and we're not at bottom - increment unread
+      // Our own message - always scroll to bottom smoothly
+      setTimeout(() => {
+        chatContainerRef.current?.scrollTo({
+          top: chatContainerRef.current.scrollHeight,
+          behavior: 'smooth'
+        });
+        setIsScrolledToBottom(true);
+        setUnreadCount(0);
+      }, 50);
+    } else if (isScrolledToBottom) {
+      // New message from others and we're at bottom - auto scroll
+      setTimeout(() => {
+        chatContainerRef.current?.scrollTo({
+          top: chatContainerRef.current.scrollHeight,
+          behavior: 'smooth'
+        });
+      }, 50);
+    } else {
+      // New message from others but we're scrolled up - increment unread
       setUnreadCount(prev => prev + 1);
     }
   }, [messages, username, isScrolledToBottom]);
@@ -890,13 +905,18 @@ function App() {
           )}
         </div>
         
-        {/* MIDDLE PANEL: Chat area - Fixed height with scroll */}
-        <div className="flex-1 xp-panel flex flex-col h-[calc(100vh-180px)] md:h-auto md:min-h-0 relative">
-          {/* Messages - Scrollable container */}
+        {/* MIDDLE PANEL: Chat area - FIXED height with scrollbar */}
+        <div className="flex-1 xp-panel flex flex-col h-[60vh] md:h-[calc(100vh-200px)] min-h-[400px] max-h-[800px] relative">
+          {/* Messages - Scrollable container with fixed height */}
           <div 
             ref={chatContainerRef}
             onScroll={handleScroll}
-            className="flex-1 overflow-y-auto space-y-2 md:space-y-3 p-2 md:p-4 pr-1"
+            className="flex-1 overflow-y-auto space-y-2 md:space-y-3 p-2 md:p-4 pr-2 scrollbar-thin scrollbar-thumb-white/30 scrollbar-track-black/10"
+            style={{ 
+              maxHeight: '100%',
+              scrollbarWidth: 'thin',
+              scrollbarColor: 'rgba(255,255,255,0.3) rgba(0,0,0,0.1)'
+            }}
           >
             {messages.length === 0 && (
               <div className="text-center py-8 opacity-50">
