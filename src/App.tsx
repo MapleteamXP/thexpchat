@@ -6,29 +6,64 @@ import { useStableChat } from './hooks/useStableChat';
 import { useRobustAV } from './hooks/useRobustAV';
 import { searchYoutube } from './lib/youtube';
 
-// Theme-aware Logo
+// Theme-aware Logo - Gamer Style
 const XPChatLogo = ({ theme, size = 'normal' }: { theme: Theme; size?: 'small' | 'normal' | 'large' }) => {
   const sizeClasses = {
-    small: 'text-xl',
-    normal: 'text-3xl',
-    large: 'text-5xl md:text-6xl'
+    small: { text: 'text-lg', icon: 'text-base' },
+    normal: { text: 'text-2xl', icon: 'text-xl' },
+    large: { text: 'text-4xl md:text-5xl', icon: 'text-3xl md:text-4xl' }
   };
   
   return (
-    <div className={`font-display ${sizeClasses[size]} flex items-center gap-1`}>
+    <div className={`font-display ${sizeClasses[size].text} flex items-center gap-1.5 select-none`}>
+      {/* Gaming Controller Icon */}
       <span 
-        className="px-2 py-1 rounded-lg"
+        className="relative"
+        style={{ 
+          filter: 'drop-shadow(0 0 8px rgba(255,255,255,0.4)) drop-shadow(0 2px 4px rgba(0,0,0,0.5))'
+        }}
+      >
+        <span className={sizeClasses[size].icon}>🎮</span>
+      </span>
+      
+      {/* XP Text - Bold Gaming Style */}
+      <span 
+        className="font-black tracking-tighter"
         style={{ 
           background: theme.gradient,
           WebkitBackgroundClip: 'text',
           WebkitTextFillColor: 'transparent',
-          filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))'
+          filter: 'drop-shadow(0 0 12px rgba(255,255,255,0.3)) drop-shadow(0 3px 6px rgba(0,0,0,0.4))',
+          textShadow: '0 0 20px rgba(255,255,255,0.2)',
+          fontStyle: 'italic'
         }}
       >
         XP
       </span>
-      <span style={{ color: theme.textColor }}>-</span>
-      <span style={{ color: theme.accent }}>chat</span>
+      
+      {/* Lightning Separator */}
+      <span 
+        className="font-black"
+        style={{ 
+          color: theme.accent,
+          filter: 'drop-shadow(0 0 6px rgba(255,255,255,0.5))',
+          fontStyle: 'italic'
+        }}
+      >
+        ⚡
+      </span>
+      
+      {/* CHAT Text */}
+      <span 
+        className="font-black tracking-tight"
+        style={{ 
+          color: theme.textColor,
+          filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.4))',
+          fontStyle: 'italic'
+        }}
+      >
+        CHAT
+      </span>
     </div>
   );
 };
