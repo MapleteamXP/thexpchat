@@ -692,7 +692,7 @@ function App() {
           </div>
         </div>
         
-        <div className="flex items-center gap-1 md:gap-2">
+        <div className="flex items-center gap-1 md:gap-2 mr-1 md:mr-3">
           {/* Quality selector - only show when AV is active */}
           {(isAudioEnabled || isVideoEnabled) && (
             <div className="relative quality-selector-container">
@@ -701,7 +701,7 @@ function App() {
                   e.stopPropagation();
                   setShowQualitySelector(!showQualitySelector);
                 }}
-                className="xp-button px-2 md:px-3 py-2 text-xs md:text-sm font-bold text-white"
+                className="xp-button px-2.5 md:px-3.5 py-2.5 text-sm md:text-base font-bold text-white"
                 style={{ background: '#6366F1' }}
                 title="Quality settings"
               >
@@ -734,7 +734,7 @@ function App() {
               await toggleAudio();
               setAudioBlocked(false);
             }}
-            className={`xp-button px-2 md:px-3 py-2 text-xs md:text-sm font-bold text-white ${isAudioEnabled ? 'animate-pulse' : ''}`}
+            className={`xp-button px-2.5 md:px-3.5 py-2.5 text-sm md:text-base font-bold text-white ${isAudioEnabled ? 'animate-pulse' : ''}`}
             style={{ background: isAudioEnabled ? '#32D657' : currentTheme.gradient }}
             title="Toggle voice chat"
           >
@@ -748,7 +748,7 @@ function App() {
               await globalAudioUnlock();
               await toggleVideo();
             }}
-            className={`xp-button px-2 md:px-3 py-2 text-xs md:text-sm font-bold text-white ${isVideoEnabled ? 'animate-pulse' : ''}`}
+            className={`xp-button px-2.5 md:px-3.5 py-2.5 text-sm md:text-base font-bold text-white ${isVideoEnabled ? 'animate-pulse' : ''}`}
             style={{ background: isVideoEnabled ? '#FF6A00' : currentTheme.gradient }}
             title="Toggle video"
           >
@@ -759,7 +759,7 @@ function App() {
           {/* YouTube button */}
           <button
             onClick={() => setShowYoutube(!showYoutube)}
-            className="xp-button px-2 md:px-3 py-2 text-xs md:text-sm font-bold text-white"
+            className="xp-button px-2.5 md:px-3.5 py-2.5 text-sm md:text-base font-bold text-white"
             style={{ background: showYoutube ? '#FF0000' : currentTheme.gradient }}
           >
             {showYoutube ? '❌' : '🎬'}
@@ -768,18 +768,18 @@ function App() {
           {/* Theme button */}
           <button
             onClick={() => setCurrentView('theme')}
-            className="xp-button px-2 md:px-3 py-2 text-xs md:text-sm font-bold text-white hidden sm:block"
+            className="xp-button px-2.5 md:px-3.5 py-2.5 text-sm md:text-base font-bold text-white hidden sm:block"
             style={{ background: currentTheme.gradient }}
           >
             🎨
           </button>
           
           {/* Connection status - stable width container to prevent layout shift */}
-          <div className="w-[80px] md:w-[100px] flex-shrink-0">
+          <div className="w-[90px] md:w-[110px] flex-shrink-0">
             {(isAudioEnabled || isVideoEnabled) && connectionState !== 'connected' && (
               <button
                 onClick={() => window.location.reload()}
-                className="xp-button w-full px-1 md:px-3 py-2 text-xs md:text-sm font-bold text-white animate-pulse whitespace-nowrap"
+                className="xp-button w-full px-1 md:px-3 py-2.5 text-xs md:text-sm font-bold text-white animate-pulse whitespace-nowrap"
                 style={{ background: '#ff4444' }}
                 title="Reload page to reconnect"
               >
@@ -1009,10 +1009,10 @@ function App() {
           {!isScrolledToBottom && (
             <button
               onClick={scrollToBottom}
-              className="absolute bottom-20 right-4 xp-button px-3 py-2 text-xs font-bold text-white shadow-lg animate-bounce z-10"
+              className="absolute bottom-20 right-4 xp-button px-2 py-1 text-[10px] font-bold text-white shadow-lg animate-bounce z-10 rounded-full"
               style={{ background: currentTheme.gradient }}
             >
-              ↓ {unreadCount > 0 ? `${unreadCount} new` : 'New messages'}
+              ↓ {unreadCount > 0 ? `${unreadCount}` : 'new'}
             </button>
           )}
           
